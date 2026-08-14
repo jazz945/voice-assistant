@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Compilation de débogage uniquement — surcharge `src/main/res/xml/`.
+
+  Le HTTP en clair est autorisé pour pouvoir viser un serveur lancé sur son
+  propre réseau (`http://192.168.1.20:8000`), ce que la production interdit.
+  L'APK produit par la CI est une compilation de débogage : il accepte donc le
+  clair. Ne pas s'en servir sur un réseau public.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

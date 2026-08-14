@@ -108,6 +108,17 @@ SIZES = {
     "favicon-64.png": 64,
 }
 
+# Icône de lanceur de l'application Android, une taille par densité d'écran.
+ANDROID_MIPMAPS = {
+    "mdpi": 48,
+    "hdpi": 72,
+    "xhdpi": 96,
+    "xxhdpi": 144,
+    "xxxhdpi": 192,
+}
+
+ANDROID_RES = Path(__file__).resolve().parent.parent.parent / "android" / "app" / "src" / "main" / "res"
+
 
 def main() -> None:
     ICON_DIR.mkdir(parents=True, exist_ok=True)
@@ -115,6 +126,13 @@ def main() -> None:
         path = ICON_DIR / name
         path.write_bytes(render(size))
         print(f"{path.relative_to(ICON_DIR.parent.parent)} — {size}×{size}, {path.stat().st_size} o")
+
+    if ANDROID_RES.parent.exists():
+        for density, size in ANDROID_MIPMAPS.items():
+            folder = ANDROID_RES / f"mipmap-{density}"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "ic_launcher.png").write_bytes(render(size))
+        print(f"icônes de lanceur Android — {len(ANDROID_MIPMAPS)} densités")
 
 
 if __name__ == "__main__":

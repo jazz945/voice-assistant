@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MotoMatch</string>
+    <string name="setup_title">Adresse de ton serveur</string>
+    <string name="setup_hint">MotoMatch s\'auto-héberge : indique l\'adresse de ton serveur. HTTPS est ajouté par défaut ; le HTTP n\'est accepté que sur un réseau privé.</string>
+    <string name="server_url_hint">motomatch.mondomaine.fr</string>
+    <string name="connect">Se connecter</string>
+    <string name="invalid_url">Adresse invalide</string>
+    <string name="connection_failed">Serveur injoignable. Vérifie l\'adresse.</string>
+    <string name="location_denied">Sans position, les croisements ne peuvent pas fonctionner.</string>
+</resources>
