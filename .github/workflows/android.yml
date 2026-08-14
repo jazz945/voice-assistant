@@ -56,3 +56,67 @@ jobs:
           path: artefacts/motomatch-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    # Un artefact d'Actions exige d'être connecté à GitHub pour le télécharger,
+    # et arrive dans un zip — pénible depuis un téléphone. Une pre-release donne
+    # un lien direct et public : on tape dessus, Android propose l'installation.
+    name: Publier l'APK en pre-release
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: motomatch-apk
+          path: artefacts
+
+      - name: Republier la pre-release « apk-latest »
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -lh artefacts/
+
+          # Étiquette mouvante : « la dernière compilation ». On supprime la
+          # release précédente et son étiquette avant de recréer, sinon la
+          # nouvelle resterait accrochée à un ancien commit.
+          gh release delete apk-latest --repo "$REPO" --yes --cleanup-tag || true
+
+          gh release create apk-latest artefacts/motomatch-debug.apk \
+            --repo "$REPO" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "MotoMatch — APK de test" \
+            --notes "$(cat <<'NOTES'
+          Compilation de test de l'application Android MotoMatch.
+
+          **Installation** — télécharge `motomatch-debug.apk` ci-dessous depuis
+          ton téléphone et ouvre-le. Android demandera d'autoriser
+          l'installation depuis cette source.
+
+          Au premier lancement, l'application demande **l'adresse de ton
+          serveur** MotoMatch : il n'y a pas de service central, l'application
+          s'auto-héberge.
+
+          ### À savoir
+
+          - **Signé avec la clé de débogage.** Installable à la main, pas
+            publiable sur le Play Store.
+          - **Accepte le HTTP en clair**, pour permettre les essais contre un
+            serveur de réseau local. Ne t'en sers pas sur un réseau public sans
+            tunnel HTTPS.
+          - **Pas de géolocalisation en arrière-plan** : les croisements ne se
+            détectent que pendant que l'application est ouverte à l'écran.
+
+          Détail dans [`android/README.md`](android/README.md).
+          NOTES
+          )"
+
+          echo "Lien direct :"
+          gh release view apk-latest --repo "$REPO" --json assets \
+            --jq '.assets[].url'
