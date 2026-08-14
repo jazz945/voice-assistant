@@ -10,8 +10,10 @@ une posture de sécurité pensée pour une application de rencontre : Argon2id,
 sessions révocables, protection contre la trilatération géographique, blocage,
 signalement et suppression de compte. Détail complet dans **[SECURITY.md](SECURITY.md)**.
 
-Le chemin vers l'App Store et Google Play est décrit dans
-**[DEPLOIEMENT_STORES.md](DEPLOIEMENT_STORES.md)**.
+L'interface est **installable sur Android et iOS** (PWA : manifeste, service
+worker, icônes) — voir la marche à suivre dans
+**[DEPLOIEMENT_STORES.md](DEPLOIEMENT_STORES.md)**, qui décrit aussi le chemin
+vers l'App Store et Google Play.
 
 ## Démarrage rapide
 
@@ -153,7 +155,8 @@ motomatch/
 │   └── ratelimit.py  limitation de débit et verrouillage
 ├── seed.py         profils de démonstration
 ├── static/         interface web (HTML/CSS/JS sans dépendance)
-└── tests/          138 tests (algorithme, API, sécurité, croisements, balades)
+├── tools/          génération des icônes
+└── tests/          145 tests (algorithme, API, sécurité, croisements, balades, PWA)
 ```
 
 ## Tests

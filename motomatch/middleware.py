@@ -19,6 +19,8 @@ CONTENT_SECURITY_POLICY = (
     "img-src 'self' https: data:; "
     "connect-src 'self'; "
     "font-src 'self'; "
+    "manifest-src 'self'; "
+    "worker-src 'self'; "
     "object-src 'none'; "
     "base-uri 'none'; "
     "form-action 'self'; "

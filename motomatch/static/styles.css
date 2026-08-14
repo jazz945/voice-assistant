@@ -334,3 +334,26 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
 
 .badge.strong { background: var(--green); border-color: var(--green); color: #0d2415; font-weight: 650; }
 .rider-actions button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* --- Application installée / petits écrans --- */
+/* Marge de sécurité sous l'encoche et la barre gestuelle en mode standalone. */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+label.checkbox { align-items: flex-start; flex-wrap: wrap; }
+label.checkbox input { margin-top: 0.15rem; }
+label.checkbox small { flex-basis: 100%; margin-left: 1.6rem; }
+
+@media (max-width: 480px) {
+  .topbar { padding: 0.8rem 1rem; }
+  .nav { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 0.2rem; }
+  .nav-btn { flex: 0 0 auto; }
+  .card { padding: 1rem; }
+  .deck { grid-template-columns: 1fr; }
+  /* Cibles tactiles : 44 px de haut minimum. */
+  button, input, select { min-height: 44px; }
+  .link-btn { min-height: 0; }
+  .hint code { word-break: break-all; }
+}

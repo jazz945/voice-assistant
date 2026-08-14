@@ -1179,3 +1179,23 @@ if settings.serve_web_client and STATIC_DIR.exists():
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/sw.js", include_in_schema=False)
+    def service_worker() -> FileResponse:
+        """Servi depuis la racine, et pas depuis /static.
+
+        La portée d'un service worker est limitée au répertoire qui le sert :
+        publié sous /static/, il ne contrôlerait pas la page d'accueil et
+        l'application ne serait pas installable.
+        """
+        return FileResponse(
+            STATIC_DIR / "sw.js",
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    def manifest() -> FileResponse:
+        return FileResponse(
+            STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json"
+        )

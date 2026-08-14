@@ -37,12 +37,66 @@ clair.**
 
 Le jeton d'accès peut rester en mémoire vive : il se regagne par rotation.
 
+## Installer sur Android dès maintenant (PWA)
+
+Avant tout client natif, l'interface web est **installable telle quelle** sur
+Android : elle déclare un manifeste, un service worker de portée racine et des
+icônes 192/512 px, ce qui remplit les critères d'installation de Chrome. Une
+fois installée, elle a son icône dans le tiroir d'applications et s'ouvre en
+plein écran, sans barre d'adresse.
+
+### Condition indispensable : HTTPS
+
+Chrome n'installe une application que depuis une **origine sécurisée** —
+`https://` ou `http://localhost`. Une adresse IP locale en `http://` ne suffit
+pas. Trois façons d'y arriver :
+
+| Méthode | Pour qui | Commande |
+|---|---|---|
+| Tunnel (le plus simple) | Essayer sur son téléphone en 5 min | `cloudflared tunnel --url http://localhost:8000` |
+| Serveur avec nom de domaine | Usage durable | Reverse proxy Caddy ou nginx + certificat Let's Encrypt |
+| USB, sans HTTPS | Développement | `chrome://inspect` → *Port forwarding* : le téléphone voit `localhost:8000`, donc origine sécurisée |
+
+### Marche à suivre
+
+```bash
+# 1. Lancer le serveur en écoutant sur toutes les interfaces
+export MOTOMATCH_SECRET_KEY="une-cle-longue-et-aleatoire"
+export MOTOMATCH_TRUSTED_HOSTS="*"        # à restreindre au vrai domaine ensuite
+python -m motomatch.seed --reset
+uvicorn motomatch.main:app --host 0.0.0.0 --port 8000
+
+# 2. Exposer en HTTPS (exemple avec un tunnel Cloudflare)
+cloudflared tunnel --url http://localhost:8000
+```
+
+Puis, sur le téléphone : ouvrir l'URL `https://…` dans Chrome, menu **⋮** →
+**Installer l'application** (ou *Ajouter à l'écran d'accueil*).
+
+Sur iPhone, Safari : bouton **Partager** → *Sur l'écran d'accueil*.
+
+### Ce que la PWA ne fait pas
+
+- **Pas de notifications push sur iOS** hors application installée, et pas de
+  géolocalisation en arrière-plan sur les deux plateformes. Les croisements ne
+  se détectent donc que pendant que l'application est ouverte à l'écran — c'est
+  la limite qui justifie à elle seule un client natif.
+- **Pas de présence dans le Play Store** : l'installation se fait depuis le
+  navigateur. Un empaquetage TWA (*Trusted Web Activity*) permettrait de publier
+  cette même PWA sur le Play Store, sans rien réécrire.
+- Les données de l'API ne sont jamais mises en cache par le service worker :
+  l'application installée démarre hors ligne, mais ne montre aucun contenu sans
+  réseau. C'est un choix — mettre profils et messages en cache les laisserait
+  lisibles après déconnexion.
+
 ## Ce qu'il reste à construire
 
-### 1. Le client mobile
+### 1. Le client mobile natif
 
-Non commencé — c'est la prochaine étape convenue. Un seul code React Native
-(Expo) ou Flutter couvre les deux plateformes.
+Non commencé. Un seul code React Native (Expo) ou Flutter couvre les deux
+plateformes. Le vrai gain par rapport à la PWA est la géolocalisation en
+arrière-plan, sans laquelle les croisements ne fonctionnent que l'application
+ouverte.
 
 ### 2. Bloquants pour la validation
 

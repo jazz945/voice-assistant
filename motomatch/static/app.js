@@ -990,4 +990,14 @@ async function boot() {
   }
 }
 
+// Service worker : rend l'application installable sur Android et iOS. Son
+// absence n'empêche rien — l'application fonctionne sans.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* navigateur sans service worker, ou origine non sécurisée : sans effet */
+    });
+  });
+}
+
 boot();
