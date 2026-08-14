@@ -2,6 +2,10 @@
 
 English | [简体中文](README-CN.md)
 
+> This repository also hosts **[MotoMatch](motomatch/README.md)**, a standalone
+> dating app for motorcyclists (FastAPI + SQLite). It is independent from the
+> voice assistant described below.
+
 This is a simple Python script project that allows dialogue with a local large language model through voice.
 
 The voice recognition part of this project is from the [Apple MLX example repo](https://github.com/ml-explore/mlx-examples/tree/main/whisper), and the textual responses are generated using the Yi model from [01.AI](https://www.lingyiwanwu.com). For more details, see the [Acknowledgments](## Acknowledgments) section.

@@ -155,3 +155,8 @@ cython_debug/
 models/*
 *.wav
 main-dev.py
+
+# MotoMatch
+motomatch/*.db
+motomatch/*.db-wal
+motomatch/*.db-shm
