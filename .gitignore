@@ -160,3 +160,4 @@ main-dev.py
 motomatch/*.db
 motomatch/*.db-wal
 motomatch/*.db-shm
+motomatch/.env

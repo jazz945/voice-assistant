@@ -1,6 +1,8 @@
 fastapi
 uvicorn[standard]
 pydantic[email]
+pydantic-settings
+argon2-cffi
 
 # Développement
 pytest

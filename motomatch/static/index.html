@@ -19,6 +19,7 @@
       <button class="nav-btn" data-view="discover">Découvrir</button>
       <button class="nav-btn" data-view="matches">Matchs</button>
       <button class="nav-btn" data-view="profile">Mon profil</button>
+      <button class="nav-btn" data-view="security">Sécurité</button>
       <button class="nav-btn ghost" id="logout-btn">Déconnexion</button>
     </nav>
   </header>
@@ -37,12 +38,16 @@
             <input type="password" name="password" required minlength="8" autocomplete="current-password" />
             <small class="muted">8 caractères minimum</small>
           </label>
+          <label class="checkbox">
+            <input type="checkbox" id="age-attestation" /> Je certifie avoir 18 ans ou plus
+            <small class="muted">(requis à l'inscription uniquement)</small>
+          </label>
           <div class="row">
             <button type="submit" class="primary" data-mode="login">Se connecter</button>
             <button type="button" class="secondary" id="register-btn">Créer un compte</button>
           </div>
         </form>
-        <p class="hint">Jeu de démo chargé ? Essaie <code>camille@motomatch.example.com</code> / <code>roadtrip2024</code>.</p>
+        <p class="hint">Jeu de démo chargé ? Essaie <code>camille@motomatch.example.com</code> / <code>Vercors-Col-2024</code>.</p>
       </div>
     </section>
 
@@ -134,7 +139,78 @@
         </div>
       </div>
     </section>
+    <!-- Sécurité et confidentialité -->
+    <section id="view-security" class="view hidden">
+      <div class="card">
+        <h2>Mot de passe</h2>
+        <form id="password-form" class="form grid compact">
+          <label>Mot de passe actuel
+            <input type="password" name="current_password" required autocomplete="current-password" />
+          </label>
+          <label>Nouveau mot de passe
+            <input type="password" name="new_password" required autocomplete="new-password" />
+          </label>
+          <div class="row"><button type="submit" class="primary">Changer</button></div>
+        </form>
+        <p class="muted">Changer le mot de passe déconnecte tous les autres appareils.</p>
+      </div>
+
+      <div class="card">
+        <h2>Appareils connectés</h2>
+        <p class="muted">Une session que tu ne reconnais pas ? Révoque-la immédiatement.</p>
+        <ul id="session-list" class="plain-list"></ul>
+        <div class="row">
+          <button type="button" class="secondary" id="logout-all-btn">
+            Déconnecter tous les appareils
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Personnes bloquées</h2>
+        <ul id="block-list" class="plain-list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Mes données</h2>
+        <p class="muted">
+          Télécharge l'intégralité de tes données, ou supprime définitivement ton compte.
+        </p>
+        <div class="row">
+          <button type="button" class="secondary" id="export-btn">Exporter mes données</button>
+        </div>
+        <form id="delete-form" class="form grid compact danger-zone">
+          <label>Mot de passe
+            <input type="password" name="password" required autocomplete="current-password" />
+          </label>
+          <label>Tape SUPPRIMER pour confirmer
+            <input name="confirmation" required placeholder="SUPPRIMER" />
+          </label>
+          <div class="row">
+            <button type="submit" class="danger">Supprimer définitivement mon compte</button>
+          </div>
+        </form>
+      </div>
+    </section>
   </main>
+
+  <!-- Boîte de dialogue de signalement -->
+  <dialog id="report-dialog" class="card">
+    <h2>Signaler <span id="report-target"></span></h2>
+    <form id="report-form" class="form">
+      <label>Motif
+        <select name="reason" id="report-reason" required></select>
+      </label>
+      <label>Détails (facultatif)
+        <textarea name="details" rows="3" maxlength="1000"></textarea>
+      </label>
+      <p class="muted">Le signalement bloque également cette personne.</p>
+      <div class="row">
+        <button type="submit" class="danger">Envoyer le signalement</button>
+        <button type="button" class="secondary" id="report-cancel">Annuler</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="toast" class="toast hidden"></div>
   <script src="/static/app.js"></script>

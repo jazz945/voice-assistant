@@ -13,7 +13,8 @@ from . import repository as repo
 from .schemas import ProfileInput
 from .security import hash_password
 
-DEMO_PASSWORD = "roadtrip2024"
+# Conforme à la politique de mots de passe (12 caractères minimum).
+DEMO_PASSWORD = "Vercors-Col-2024"
 
 DEMO_RIDERS: list[dict] = [
     {

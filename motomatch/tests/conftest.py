@@ -3,30 +3,53 @@
 from __future__ import annotations
 
 import importlib
-import os
 from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 
+# Mot de passe conforme à la politique (12 caractères minimum, non courant).
+TEST_PASSWORD = "Vercors-Col-2024"
+
 
 @pytest.fixture
-def client(tmp_path, monkeypatch) -> Iterator[TestClient]:
-    """Client de test branché sur une base SQLite temporaire."""
+def env(tmp_path, monkeypatch):
+    """Environnement de base : chaque test a sa propre base SQLite."""
     monkeypatch.setenv("MOTOMATCH_DB", str(tmp_path / "test.db"))
+    monkeypatch.setenv("MOTOMATCH_ENV", "development")
+    monkeypatch.setenv("MOTOMATCH_SECRET_KEY", "cle-de-test-suffisamment-longue-pour-les-tests")
+    return monkeypatch
 
-    # Les modules lisent MOTOMATCH_DB à chaque connexion, mais on recharge par
-    # sécurité pour repartir d'un état propre si un test précédent a importé.
-    from motomatch import db as db_module
 
-    importlib.reload(db_module)
-    db_module.init_db()
+@pytest.fixture
+def build_client(env):
+    """Fabrique un client de test, avec surcharges de configuration optionnelles.
 
-    from motomatch import main as main_module
+    Les modules lisent la configuration à l'import ; on les recharge donc après
+    avoir posé les variables d'environnement.
+    """
 
-    importlib.reload(main_module)
+    def _build(*, raise_server_exceptions: bool = True, **settings_env: str) -> TestClient:
+        for key, value in settings_env.items():
+            env.setenv(f"MOTOMATCH_{key.upper()}", value)
 
-    with TestClient(main_module.app) as test_client:
+        from motomatch import config as config_module
+
+        config_module.reload_settings()
+
+        for name in ("db", "audit", "repository", "main"):
+            importlib.reload(importlib.import_module(f"motomatch.{name}"))
+
+        from motomatch import main as main_module
+
+        return TestClient(main_module.app, raise_server_exceptions=raise_server_exceptions)
+
+    return _build
+
+
+@pytest.fixture
+def client(build_client) -> Iterator[TestClient]:
+    with build_client() as test_client:
         yield test_client
 
 
@@ -58,16 +81,24 @@ def rider_profile() -> dict:
 
 @pytest.fixture
 def register(client):
-    """Crée un compte (+ profil optionnel) et renvoie ses en-têtes d'auth."""
+    """Crée un compte (+ profil optionnel) et renvoie ses jetons et en-têtes."""
 
-    def _register(email: str, password: str = "roadtrip2024", profile: dict | None = None):
-        response = client.post("/api/auth/register", json={"email": email, "password": password})
+    def _register(email: str, password: str = TEST_PASSWORD, profile: dict | None = None):
+        response = client.post(
+            "/api/auth/register",
+            json={"email": email, "password": password, "age_attestation": True},
+        )
         assert response.status_code == 201, response.text
         session = response.json()
-        headers = {"Authorization": f"Bearer {session['token']}"}
+        headers = {"Authorization": f"Bearer {session['access_token']}"}
         if profile is not None:
             saved = client.put("/api/me/profile", json=profile, headers=headers)
             assert saved.status_code == 200, saved.text
-        return {"headers": headers, "user_id": session["user_id"], "token": session["token"]}
+        return {
+            "headers": headers,
+            "user_id": session["user_id"],
+            "access_token": session["access_token"],
+            "refresh_token": session["refresh_token"],
+        }
 
     return _register

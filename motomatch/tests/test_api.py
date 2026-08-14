@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from .conftest import TEST_PASSWORD
+
 
 def other_profile(base: dict, **overrides) -> dict:
     profile = deepcopy(base)
@@ -23,36 +25,43 @@ def test_meta_lists_allowed_values(client):
 
 def test_register_then_login(client):
     created = client.post(
-        "/api/auth/register", json={"email": "A@Moto.example.com", "password": "roadtrip2024"}
+        "/api/auth/register",
+        json={"email": "A@Moto.example.com", "password": TEST_PASSWORD, "age_attestation": True},
     )
     assert created.status_code == 201
     assert created.json()["has_profile"] is False
 
     # L'e-mail est normalisé en minuscules : la casse ne bloque pas la connexion.
     logged = client.post(
-        "/api/auth/login", json={"email": "a@moto.example.com", "password": "roadtrip2024"}
+        "/api/auth/login", json={"email": "a@moto.example.com", "password": TEST_PASSWORD}
     )
     assert logged.status_code == 200
-    assert logged.json()["token"]
+    body = logged.json()
+    assert body["access_token"] and body["refresh_token"]
+    assert body["token_type"] == "Bearer"
 
 
 def test_register_rejects_duplicate_email(client, register):
     register("dup@moto.example.com")
     again = client.post(
-        "/api/auth/register", json={"email": "dup@moto.example.com", "password": "roadtrip2024"}
+        "/api/auth/register",
+        json={"email": "dup@moto.example.com", "password": TEST_PASSWORD, "age_attestation": True},
     )
     assert again.status_code == 409
 
 
 def test_register_rejects_short_password(client):
-    response = client.post("/api/auth/register", json={"email": "x@moto.example.com", "password": "court"})
+    response = client.post(
+        "/api/auth/register",
+        json={"email": "x@moto.example.com", "password": "court123", "age_attestation": True},
+    )
     assert response.status_code == 422
 
 
 def test_login_with_wrong_password_fails(client, register):
     register("who@moto.example.com")
     response = client.post(
-        "/api/auth/login", json={"email": "who@moto.example.com", "password": "mauvaispass"}
+        "/api/auth/login", json={"email": "who@moto.example.com", "password": "MauvaisPass-2024"}
     )
     assert response.status_code == 401
 
@@ -391,4 +400,4 @@ def test_blank_message_is_rejected(client, register, rider_profile):
         json={"body": "   "},
         headers=alice["headers"],
     )
-    assert response.status_code == 400
+    assert response.status_code == 422

@@ -1,9 +1,10 @@
 /* MotoMatch — client SPA sans dépendance. */
 
 const state = {
-  token: localStorage.getItem("motomatch_token"),
+  accessToken: sessionStorage.getItem("motomatch_access"),
+  refreshToken: localStorage.getItem("motomatch_refresh"),
   userId: Number(localStorage.getItem("motomatch_user_id")) || null,
-  meta: { bike_categories: [], riding_styles: [], pace_levels: [] },
+  meta: { bike_categories: [], riding_styles: [], pace_levels: [], report_reasons: [] },
   selectedStyles: new Set(),
   activeMatch: null,
 };
@@ -13,20 +14,59 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 // --- Accès API --------------------------------------------------------------
 
-async function api(path, { method = "GET", body } = {}) {
+async function rawRequest(path, method, body) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (state.token) headers["Authorization"] = `Bearer ${state.token}`;
-
-  const response = await fetch(path, {
+  if (state.accessToken) headers["Authorization"] = `Bearer ${state.accessToken}`;
+  return fetch(path, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+// Un seul rafraîchissement à la fois : plusieurs 401 simultanés partagent la
+// même promesse, sinon la rotation invaliderait les jetons les uns des autres.
+let refreshInFlight = null;
+
+async function refreshSession() {
+  if (!state.refreshToken) return false;
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const response = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: state.refreshToken }),
+      });
+      if (!response.ok) return false;
+      storeSession(await response.json());
+      return true;
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function api(path, { method = "GET", body, retry = true } = {}) {
+  let response = await rawRequest(path, method, body);
+
+  // Le jeton d'accès est court : on le renouvelle en silence puis on rejoue.
+  if (response.status === 401 && retry && !path.startsWith("/api/auth/")) {
+    if (await refreshSession()) {
+      response = await rawRequest(path, method, body);
+    }
+  }
 
   if (response.status === 401) {
     signOut();
     throw new Error("Session expirée, reconnecte-toi.");
+  }
+  if (response.status === 429) {
+    const wait = response.headers.get("Retry-After");
+    throw new Error(
+      wait ? `Trop de tentatives. Réessaie dans ${wait} s.` : "Trop de tentatives, réessaie plus tard.",
+    );
   }
   if (response.status === 204) return null;
 
@@ -39,7 +79,11 @@ function errorMessage(payload) {
   const detail = payload.detail;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
-    return detail.map((item) => `${(item.loc || []).slice(1).join(".")} : ${item.msg}`).join(" · ");
+    return detail
+      .map((item) =>
+        typeof item === "string" ? item : `${(item.loc || []).slice(1).join(".")} : ${item.msg}`,
+      )
+      .join(" · ");
   }
   return "Une erreur est survenue.";
 }
@@ -64,22 +108,33 @@ function showView(name) {
   );
   if (name === "discover") loadDeck();
   if (name === "matches") loadMatches();
+  if (name === "security") loadSecurity();
+}
+
+// Le jeton d'accès vit en sessionStorage (effacé à la fermeture de l'onglet),
+// le jeton de rafraîchissement en localStorage pour garder la session ouverte.
+function storeSession(session) {
+  state.accessToken = session.access_token;
+  state.refreshToken = session.refresh_token;
+  state.userId = session.user_id;
+  sessionStorage.setItem("motomatch_access", session.access_token);
+  localStorage.setItem("motomatch_refresh", session.refresh_token);
+  localStorage.setItem("motomatch_user_id", String(session.user_id));
 }
 
 function signIn(session) {
-  state.token = session.token;
-  state.userId = session.user_id;
-  localStorage.setItem("motomatch_token", session.token);
-  localStorage.setItem("motomatch_user_id", String(session.user_id));
+  storeSession(session);
   $("#nav").classList.remove("hidden");
   showView(session.has_profile ? "discover" : "profile");
   if (!session.has_profile) toast("Complète ton profil moto pour commencer.");
 }
 
 function signOut() {
-  state.token = null;
+  state.accessToken = null;
+  state.refreshToken = null;
   state.userId = null;
-  localStorage.removeItem("motomatch_token");
+  sessionStorage.removeItem("motomatch_access");
+  localStorage.removeItem("motomatch_refresh");
   localStorage.removeItem("motomatch_user_id");
   $("#nav").classList.add("hidden");
   $$(".view").forEach((view) => view.classList.add("hidden"));
@@ -92,6 +147,14 @@ async function authenticate(path) {
   const form = $("#auth-form");
   if (!form.reportValidity()) return;
   const data = Object.fromEntries(new FormData(form));
+  const isRegistration = path.endsWith("/register");
+  if (isRegistration) {
+    if (!$("#age-attestation").checked) {
+      toast("Confirme que tu as 18 ans ou plus pour t'inscrire.", true);
+      return;
+    }
+    data.age_attestation = true;
+  }
   try {
     const session = await api(path, { method: "POST", body: data });
     signIn(session);
@@ -216,6 +279,14 @@ function renderDeck(results) {
       sendSwipe(Number(button.dataset.user), button.dataset.swipe),
     );
   });
+  deck.querySelectorAll("[data-block]").forEach((button) => {
+    button.addEventListener("click", () => blockUser(Number(button.dataset.block)));
+  });
+  deck.querySelectorAll("[data-report]").forEach((button) => {
+    button.addEventListener("click", () =>
+      openReportDialog(Number(button.dataset.report), button.dataset.name),
+    );
+  });
 }
 
 function renderRiderCard(item) {
@@ -251,6 +322,11 @@ function renderRiderCard(item) {
       <div class="rider-actions">
         <button class="btn-pass" data-swipe="pass" data-user="${p.user_id}">Passer</button>
         <button class="btn-like" data-swipe="like" data-user="${p.user_id}">Rouler ensemble</button>
+      </div>
+      <div class="rider-safety">
+        <button class="link-btn" data-block="${p.user_id}">Bloquer</button>
+        <button class="link-btn danger-text" data-report="${p.user_id}"
+                data-name="${escapeHtml(p.display_name)}">Signaler</button>
       </div>
     </article>`;
 }
@@ -347,6 +423,162 @@ async function sendMessage(event) {
   }
 }
 
+// --- Sécurité des personnes -------------------------------------------------
+
+async function blockUser(userId) {
+  if (!confirm("Bloquer cette personne ? Vous disparaîtrez mutuellement de l'application.")) return;
+  try {
+    await api("/api/blocks", { method: "POST", body: { target_user_id: userId } });
+    toast("Personne bloquée.");
+    await loadDeck();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function openReportDialog(userId, name) {
+  const dialog = $("#report-dialog");
+  $("#report-target").textContent = name || "cette personne";
+  dialog.dataset.target = String(userId);
+  $("#report-reason").innerHTML = state.meta.report_reasons
+    .map((reason) => `<option value="${reason}">${reason.replaceAll("-", " ")}</option>`)
+    .join("");
+  dialog.showModal();
+}
+
+async function submitReport(event) {
+  event.preventDefault();
+  const dialog = $("#report-dialog");
+  const data = Object.fromEntries(new FormData(event.target));
+  try {
+    await api("/api/reports", {
+      method: "POST",
+      body: {
+        target_user_id: Number(dialog.dataset.target),
+        reason: data.reason,
+        details: data.details || "",
+      },
+    });
+    dialog.close();
+    event.target.reset();
+    toast("Signalement envoyé. Cette personne est aussi bloquée.");
+    await loadDeck();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+// --- Écran Sécurité ---------------------------------------------------------
+
+async function loadSecurity() {
+  await Promise.all([loadSessions(), loadBlocks()]);
+}
+
+async function loadSessions() {
+  try {
+    const data = await api("/api/auth/sessions");
+    $("#session-list").innerHTML = data.results
+      .map(
+        (session) => `
+        <li>
+          <div>
+            <strong>${session.current ? "Cet appareil" : "Autre appareil"}</strong>
+            <div class="muted">${escapeHtml(session.device_label || "appareil inconnu")}</div>
+            <div class="muted">Dernière activité : ${escapeHtml(
+              session.last_used_at || session.created_at,
+            )}</div>
+          </div>
+          ${
+            session.current
+              ? ""
+              : `<button class="link-btn danger-text" data-revoke="${session.id}">Révoquer</button>`
+          }
+        </li>`,
+      )
+      .join("");
+    $$("#session-list [data-revoke]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await api(`/api/auth/sessions/${button.dataset.revoke}`, { method: "DELETE" });
+        toast("Session révoquée.");
+        await loadSessions();
+      });
+    });
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function loadBlocks() {
+  try {
+    const data = await api("/api/blocks");
+    $("#block-list").innerHTML = data.results.length
+      ? data.results
+          .map(
+            (block) => `
+            <li>
+              <span>${escapeHtml(block.display_name || `Utilisateur ${block.user_id}`)}</span>
+              <button class="link-btn" data-unblock="${block.user_id}">Débloquer</button>
+            </li>`,
+          )
+          .join("")
+      : '<li class="muted">Personne de bloqué.</li>';
+    $$("#block-list [data-unblock]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await api(`/api/blocks/${button.dataset.unblock}`, { method: "DELETE" });
+        toast("Personne débloquée.");
+        await loadBlocks();
+      });
+    });
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function changePassword(event) {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.target));
+  try {
+    const result = await api("/api/me/password", { method: "POST", body: data });
+    event.target.reset();
+    toast(`Mot de passe changé. ${result.revoked_other_sessions} autre(s) session(s) fermée(s).`);
+    await loadSessions();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function exportData() {
+  try {
+    const data = await api("/api/me/export");
+    // Affichage dans un nouvel onglet : le téléchargement direct est bloqué
+    // dans certains contextes d'intégration.
+    const window_ = window.open("", "_blank");
+    if (window_) {
+      window_.document.title = "Export MotoMatch";
+      const pre = window_.document.createElement("pre");
+      pre.textContent = JSON.stringify(data, null, 2);
+      window_.document.body.appendChild(pre);
+    } else {
+      toast("Autorise les fenêtres surgissantes pour voir l'export.", true);
+    }
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function deleteAccount(event) {
+  event.preventDefault();
+  if (!confirm("Cette action est définitive et efface toutes tes données. Continuer ?")) return;
+  const data = Object.fromEntries(new FormData(event.target));
+  try {
+    await api("/api/me", { method: "DELETE", body: data });
+    signOut();
+    toast("Compte supprimé. Bonne route.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
 // --- Utilitaires ------------------------------------------------------------
 
 function escapeHtml(value) {
@@ -391,6 +623,20 @@ async function boot() {
     loadDeck();
   });
   $("#chat-form").addEventListener("submit", sendMessage);
+  $("#password-form").addEventListener("submit", changePassword);
+  $("#delete-form").addEventListener("submit", deleteAccount);
+  $("#report-form").addEventListener("submit", submitReport);
+  $("#report-cancel").addEventListener("click", () => $("#report-dialog").close());
+  $("#export-btn").addEventListener("click", exportData);
+  $("#logout-all-btn").addEventListener("click", async () => {
+    if (!confirm("Déconnecter tous les appareils, y compris celui-ci ?")) return;
+    try {
+      await api("/api/auth/logout-all", { method: "POST" });
+    } finally {
+      signOut();
+      toast("Toutes les sessions ont été fermées.");
+    }
+  });
   $("#logout-btn").addEventListener("click", async () => {
     try {
       await api("/api/auth/logout", { method: "POST" });
@@ -404,9 +650,13 @@ async function boot() {
     button.addEventListener("click", () => showView(button.dataset.view)),
   );
 
-  if (!state.token) {
+  if (!state.accessToken && !state.refreshToken) {
     signOut();
     return;
+  }
+  // Onglet rouvert : le jeton d'accès a disparu, on le regagne par rotation.
+  if (!state.accessToken && state.refreshToken) {
+    await refreshSession();
   }
   try {
     const me = await api("/api/me");
