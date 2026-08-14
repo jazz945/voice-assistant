@@ -109,6 +109,8 @@ function showView(name) {
   if (name === "discover") loadDeck();
   if (name === "matches") loadMatches();
   if (name === "security") loadSecurity();
+  if (name === "crossings") loadCrossings();
+  if (name === "rides") loadRides();
 }
 
 // Le jeton d'accès vit en sessionStorage (effacé à la fermeture de l'onglet),
@@ -181,6 +183,27 @@ function renderMeta() {
   $("#filter-style").innerHTML =
     '<option value="">Toutes</option>' +
     state.meta.riding_styles.map((s) => `<option value="${s}">${label(s)}</option>`).join("");
+
+  $("#ride-pace").innerHTML = state.meta.pace_levels
+    .map((p) => `<option value="${p}">${label(p)}</option>`)
+    .join("");
+  $("#ride-route").innerHTML = (state.meta.ride_route_types || [])
+    .map((r) => `<option value="${r}">${label(r)}</option>`)
+    .join("");
+  $("#ride-visibility").innerHTML = (state.meta.ride_visibilities || [])
+    .map((v) => `<option value="${v}">${label(v)}</option>`)
+    .join("");
+  $("#ride-categories").innerHTML = state.meta.bike_categories
+    .map((c) => `<span class="chip" data-ride-category="${c}">${label(c)}</span>`)
+    .join("");
+  $$("#ride-categories .chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const category = chip.dataset.rideCategory;
+      if (selectedRideCategories.has(category)) selectedRideCategories.delete(category);
+      else selectedRideCategories.add(category);
+      chip.classList.toggle("selected");
+    });
+  });
 
   $("#styles-choices").innerHTML = state.meta.riding_styles
     .map((s) => `<span class="chip" data-style="${s}">${label(s)}</span>`)
@@ -279,10 +302,14 @@ function renderDeck(results) {
       sendSwipe(Number(button.dataset.user), button.dataset.swipe),
     );
   });
-  deck.querySelectorAll("[data-block]").forEach((button) => {
+  bindSafetyButtons(deck);
+}
+
+function bindSafetyButtons(container) {
+  container.querySelectorAll("[data-block]").forEach((button) => {
     button.addEventListener("click", () => blockUser(Number(button.dataset.block)));
   });
-  deck.querySelectorAll("[data-report]").forEach((button) => {
+  container.querySelectorAll("[data-report]").forEach((button) => {
     button.addEventListener("click", () =>
       openReportDialog(Number(button.dataset.report), button.dataset.name),
     );
@@ -418,6 +445,293 @@ async function sendMessage(event) {
     input.value = "";
     await refreshMessages();
     await loadMatches();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+// --- Croisements ------------------------------------------------------------
+
+async function loadCrossings() {
+  try {
+    const me = await api("/api/me");
+    const enabled = Boolean(me.crossings_enabled);
+    $("#crossings-toggle").checked = enabled;
+    $("#crossings-actions").classList.toggle("hidden", !enabled);
+
+    const list = $("#crossings-list");
+    if (!enabled) {
+      list.innerHTML =
+        '<p class="empty">Active les croisements pour voir qui tu as croisé sur la route.</p>';
+      return;
+    }
+    const data = await api("/api/crossings");
+    list.innerHTML = data.results.length
+      ? data.results.map(renderCrossingCard).join("")
+      : '<p class="empty">Personne de croisé pour l\'instant. Roule un peu.</p>';
+    list.querySelectorAll("[data-salut]").forEach((button) => {
+      button.addEventListener("click", () => sendSalut(Number(button.dataset.salut)));
+    });
+    bindSafetyButtons(list);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function renderCrossingCard(item) {
+  const p = item.profile;
+  // Le sens inverse est le vrai croisement motard : on le met en avant.
+  const badge =
+    item.direction === "sens-inverse"
+      ? '<span class="badge strong">sens inverse</span>'
+      : `<span class="badge">${escapeHtml(item.direction.replaceAll("-", " "))}</span>`;
+  const salut = item.salut_received
+    ? item.salut_sent
+      ? '<span class="badge strong">salut rendu · match</span>'
+      : '<span class="badge strong">t\'a salué</span>'
+    : "";
+
+  return `
+    <article class="rider">
+      <div class="rider-head">
+        <div>
+          <h3>${escapeHtml(p.display_name)}, ${p.age}</h3>
+          <p class="rider-sub">${escapeHtml(p.city)} · ${escapeHtml(item.last_seen_at)}</p>
+        </div>
+        <div class="crossing-mark">${item.times}×</div>
+      </div>
+      <p class="crossing-summary">${escapeHtml(item.summary)}</p>
+      <div class="chips">${badge}
+        <span class="badge">${escapeHtml(item.context)}</span>${salut}</div>
+      <div class="bike">
+        <strong>${escapeHtml(p.bike_brand)} ${escapeHtml(p.bike_model)}</strong>
+        <div class="bike-meta">${p.engine_cc} cm³ · ${escapeHtml(p.bike_category)}</div>
+      </div>
+      <div class="rider-actions">
+        <button class="btn-like" data-salut="${item.crossing_id}"
+                ${item.salut_sent ? "disabled" : ""}>
+          ${item.salut_sent ? "Salut envoyé" : "Faire un signe"}
+        </button>
+      </div>
+      <div class="rider-safety">
+        <button class="link-btn" data-block="${p.user_id}">Bloquer</button>
+        <button class="link-btn danger-text" data-report="${p.user_id}"
+                data-name="${escapeHtml(p.display_name)}">Signaler</button>
+      </div>
+    </article>`;
+}
+
+async function sendSalut(crossingId) {
+  try {
+    const result = await api(`/api/crossings/${crossingId}/salut`, { method: "POST" });
+    toast(
+      result.salut_returned
+        ? "Salut rendu — c'est un match !"
+        : "Signe envoyé. S'il te le rend, vous matchez.",
+    );
+    await loadCrossings();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function toggleCrossings(event) {
+  try {
+    const result = await api("/api/me/crossings", {
+      method: "PUT",
+      body: { enabled: event.target.checked },
+    });
+    toast(
+      result.enabled
+        ? "Croisements activés."
+        : `Croisements coupés, ${result.purged_pings} position(s) effacée(s).`,
+    );
+    await loadCrossings();
+  } catch (error) {
+    toast(error.message, true);
+    await loadCrossings();
+  }
+}
+
+function sendPing() {
+  if (!navigator.geolocation) {
+    toast("Géolocalisation indisponible sur ce navigateur.", true);
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    async ({ coords }) => {
+      try {
+        const result = await api("/api/crossings/ping", {
+          method: "POST",
+          body: {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            speed_kmh: coords.speed === null ? null : coords.speed * 3.6,
+            heading_deg: coords.heading === null ? null : coords.heading,
+          },
+        });
+        toast(
+          result.new_crossings
+            ? `${result.new_crossings} nouveau(x) croisement(s) !`
+            : "Position prise en compte.",
+        );
+        await loadCrossings();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    },
+    () => toast("Position refusée.", true),
+    { enableHighAccuracy: true },
+  );
+}
+
+async function purgeCrossings() {
+  if (!confirm("Effacer définitivement tous tes croisements et positions ?")) return;
+  try {
+    const result = await api("/api/crossings", { method: "DELETE" });
+    toast(`${result.deleted_rows} enregistrement(s) effacé(s).`);
+    await loadCrossings();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+// --- Balades ----------------------------------------------------------------
+
+const selectedRideCategories = new Set();
+
+async function loadRides() {
+  try {
+    const data = await api("/api/rides");
+    const list = $("#rides-list");
+    list.innerHTML = data.results.length
+      ? data.results.map(renderRideCard).join("")
+      : '<p class="empty">Aucune balade à venir. Lance la première.</p>';
+    list.querySelectorAll("[data-join]").forEach((button) => {
+      button.addEventListener("click", () => joinRide(Number(button.dataset.join)));
+    });
+    list.querySelectorAll("[data-leave]").forEach((button) => {
+      button.addEventListener("click", () => leaveRide(Number(button.dataset.leave)));
+    });
+    list.querySelectorAll("[data-cancel]").forEach((button) => {
+      button.addEventListener("click", () => cancelRide(Number(button.dataset.cancel)));
+    });
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+const VISIBILITY_LABEL = {
+  public: "ouverte à tous",
+  matchs: "réservée à mes matchs",
+  "sur-demande": "sur validation",
+};
+
+function renderRideCard(ride) {
+  const when = new Date(ride.start_at).toLocaleString("fr-FR", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const categories = (ride.bike_categories || [])
+    .map((c) => `<span class="chip static">${escapeHtml(c)}</span>`)
+    .join("");
+
+  let action = `<button class="btn-like" data-join="${ride.id}">Rejoindre</button>`;
+  if (ride.is_organiser) {
+    action = `<button class="btn-pass" data-cancel="${ride.id}">Annuler la balade</button>`;
+  } else if (ride.my_status === "accepte") {
+    action = `<button class="btn-pass" data-leave="${ride.id}">Je me désiste</button>`;
+  } else if (ride.my_status === "demande") {
+    action = `<button class="btn-pass" disabled>Demande en attente</button>`;
+  } else if (ride.spots_left === 0) {
+    action = `<button class="btn-pass" disabled>Complet</button>`;
+  }
+
+  return `
+    <article class="rider">
+      <div class="rider-head">
+        <div>
+          <h3>${escapeHtml(ride.title)}</h3>
+          <p class="rider-sub">
+            ${escapeHtml(when)} · départ ${escapeHtml(ride.start_city)} · ${ride.distance_km} km
+          </p>
+        </div>
+        <div class="score">${ride.accepted_count}/${ride.max_participants}<small>motards</small></div>
+      </div>
+      ${ride.description ? `<p class="bio">${escapeHtml(ride.description)}</p>` : ""}
+      <div class="bike">
+        <strong>${escapeHtml(ride.route_type)}</strong>
+        <div class="bike-meta">
+          rythme ${escapeHtml(ride.pace.replaceAll("-", " "))} ·
+          ${escapeHtml(VISIBILITY_LABEL[ride.visibility] || ride.visibility)} ·
+          organisée par ${escapeHtml(ride.organiser_name || "—")}
+          ${ride.distance_from_you_km !== undefined ? ` · départ à ${ride.distance_from_you_km} km de toi` : ""}
+        </div>
+      </div>
+      ${categories ? `<div class="chips">${categories}</div>` : ""}
+      ${
+        ride.start_latitude === undefined
+          ? '<p class="muted small">Point de rendez-vous exact visible une fois inscrit.</p>'
+          : ""
+      }
+      <div class="rider-actions">${action}</div>
+    </article>`;
+}
+
+async function createRide(event) {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.target));
+  ["start_latitude", "start_longitude", "distance_km", "max_participants"].forEach((key) => {
+    data[key] = Number(data[key]);
+  });
+  // <input datetime-local> ne porte pas de fuseau : on le complète.
+  data.start_at = new Date(data.start_at).toISOString();
+  data.bike_categories = Array.from(selectedRideCategories);
+  try {
+    await api("/api/rides", { method: "POST", body: data });
+    event.target.reset();
+    selectedRideCategories.clear();
+    $$("#ride-categories .chip").forEach((chip) => chip.classList.remove("selected"));
+    toast("Balade créée.");
+    await loadRides();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function joinRide(rideId) {
+  try {
+    const result = await api(`/api/rides/${rideId}/join`, { method: "POST" });
+    toast(
+      result.status === "demande"
+        ? "Demande envoyée, l'organisateur doit valider."
+        : "Tu es inscrit. Bonne route !",
+    );
+    await loadRides();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function leaveRide(rideId) {
+  try {
+    await api(`/api/rides/${rideId}/join`, { method: "DELETE" });
+    toast("Désistement enregistré.");
+    await loadRides();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function cancelRide(rideId) {
+  if (!confirm("Annuler cette balade pour tous les participants ?")) return;
+  try {
+    await api(`/api/rides/${rideId}`, { method: "DELETE" });
+    toast("Balade annulée.");
+    await loadRides();
   } catch (error) {
     toast(error.message, true);
   }
@@ -628,6 +942,10 @@ async function boot() {
   $("#report-form").addEventListener("submit", submitReport);
   $("#report-cancel").addEventListener("click", () => $("#report-dialog").close());
   $("#export-btn").addEventListener("click", exportData);
+  $("#crossings-toggle").addEventListener("change", toggleCrossings);
+  $("#ping-btn").addEventListener("click", sendPing);
+  $("#purge-crossings-btn").addEventListener("click", purgeCrossings);
+  $("#ride-form").addEventListener("submit", createRide);
   $("#logout-all-btn").addEventListener("click", async () => {
     if (!confirm("Déconnecter tous les appareils, y compris celui-ci ?")) return;
     try {

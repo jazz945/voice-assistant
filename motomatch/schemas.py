@@ -7,7 +7,7 @@ en type, en longueur et en valeurs autorisées avant d'atteindre la base.
 from __future__ import annotations
 
 import unicodedata
-from datetime import date
+from datetime import date, datetime, timezone
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -211,6 +211,127 @@ class AccountDeletionInput(BaseModel):
         if value.strip().upper() != "SUPPRIMER":
             raise ValueError("tapez SUPPRIMER pour confirmer la suppression définitive")
         return value
+
+
+# --- Croisements ------------------------------------------------------------
+
+
+class CrossingSettingsInput(BaseModel):
+    """Interrupteur des croisements : opt-in explicite, coupable à tout moment."""
+
+    enabled: bool
+
+
+class LocationPingInput(BaseModel):
+    """Position envoyée par le client.
+
+    Elle est réduite à une cellule de grille dès réception : ni `latitude` ni
+    `longitude` n'atteignent jamais la base (cf. `crossings.py`).
+    """
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    speed_kmh: float | None = Field(default=None, ge=0, le=400)
+    heading_deg: float | None = Field(default=None, ge=0, lt=360)
+    ride_id: int | None = Field(default=None, gt=0)
+
+
+# --- Balades ----------------------------------------------------------------
+
+RIDE_ROUTE_TYPES = (
+    "cols",
+    "departementales",
+    "autoroute",
+    "off-road",
+    "urbain",
+    "circuit",
+    "cotier",
+)
+
+RIDE_VISIBILITIES = ("public", "matchs", "sur-demande")
+
+
+class RideInput(BaseModel):
+    title: str = Field(min_length=3, max_length=100)
+    description: str = Field(default="", max_length=2000)
+    start_city: str = Field(min_length=1, max_length=80)
+    start_latitude: float = Field(ge=-90, le=90)
+    start_longitude: float = Field(ge=-180, le=180)
+    start_at: datetime
+    distance_km: int = Field(default=0, ge=0, le=5000)
+    pace: str
+    route_type: str
+    bike_categories: list[str] = Field(default_factory=list)
+    max_participants: int = Field(default=8, ge=2, le=100)
+    visibility: str = "public"
+
+    @field_validator("title", "start_city", "description")
+    @classmethod
+    def _clean(cls, value: str) -> str:
+        return clean_text(value)
+
+    @field_validator("start_at")
+    @classmethod
+    def _must_be_future(cls, value: datetime) -> datetime:
+        moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if moment <= datetime.now(timezone.utc):
+            raise ValueError("la date de départ doit être dans le futur")
+        return moment
+
+    @field_validator("pace")
+    @classmethod
+    def _check_pace(cls, value: str) -> str:
+        pace = value.strip().lower()
+        if pace not in PACE_LEVELS:
+            raise ValueError(f"rythme inconnu, valeurs possibles : {', '.join(PACE_LEVELS)}")
+        return pace
+
+    @field_validator("route_type")
+    @classmethod
+    def _check_route_type(cls, value: str) -> str:
+        route = value.strip().lower()
+        if route not in RIDE_ROUTE_TYPES:
+            raise ValueError(f"type de route inconnu, valeurs possibles : {', '.join(RIDE_ROUTE_TYPES)}")
+        return route
+
+    @field_validator("visibility")
+    @classmethod
+    def _check_visibility(cls, value: str) -> str:
+        visibility = value.strip().lower()
+        if visibility not in RIDE_VISIBILITIES:
+            raise ValueError(
+                f"autorisation inconnue, valeurs possibles : {', '.join(RIDE_VISIBILITIES)}"
+            )
+        return visibility
+
+    @field_validator("bike_categories")
+    @classmethod
+    def _check_categories(cls, value: list[str]) -> list[str]:
+        """Familles de motos bienvenues. Vide = toutes."""
+        cleaned: list[str] = []
+        for category in value:
+            normalised = category.strip().lower()
+            if normalised not in BIKE_CATEGORIES:
+                raise ValueError(
+                    f"catégorie inconnue '{category}', valeurs possibles : {', '.join(BIKE_CATEGORIES)}"
+                )
+            if normalised not in cleaned:
+                cleaned.append(normalised)
+        return cleaned
+
+
+class ParticipationDecisionInput(BaseModel):
+    """Décision de l'organisateur sur une demande de participation."""
+
+    decision: str
+
+    @field_validator("decision")
+    @classmethod
+    def _check_decision(cls, value: str) -> str:
+        decision = value.strip().lower()
+        if decision not in {"accepte", "refuse"}:
+            raise ValueError("decision doit valoir 'accepte' ou 'refuse'")
+        return decision
 
 
 class DiscoveryFilters(BaseModel):

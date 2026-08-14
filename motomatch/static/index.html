@@ -17,6 +17,8 @@
     </div>
     <nav id="nav" class="nav hidden">
       <button class="nav-btn" data-view="discover">Découvrir</button>
+      <button class="nav-btn" data-view="crossings">Croisés</button>
+      <button class="nav-btn" data-view="rides">Balades</button>
       <button class="nav-btn" data-view="matches">Matchs</button>
       <button class="nav-btn" data-view="profile">Mon profil</button>
       <button class="nav-btn" data-view="security">Sécurité</button>
@@ -139,6 +141,72 @@
         </div>
       </div>
     </section>
+    <!-- Croisements -->
+    <section id="view-crossings" class="view hidden">
+      <div class="card">
+        <h2>Motards croisés</h2>
+        <p class="muted">
+          Quand tu croises quelqu'un qui a aussi l'application, ça se retrouve ici.
+          Un signe de la main se rend : si vous vous saluez tous les deux, vous matchez.
+        </p>
+        <label class="checkbox toggle-row">
+          <input type="checkbox" id="crossings-toggle" />
+          <span>Activer les croisements</span>
+        </label>
+        <p class="muted small">
+          Désactivé par défaut. Aucune coordonnée GPS n'est conservée : ta position est
+          réduite à une zone de 500 m et effacée sous 24 h. Couper la fonction efface
+          immédiatement ce qui a été enregistré.
+        </p>
+        <div class="row" id="crossings-actions">
+          <button type="button" class="secondary" id="ping-btn">Signaler ma position</button>
+          <button type="button" class="link-btn danger-text" id="purge-crossings-btn">
+            Effacer tout mon historique de croisements
+          </button>
+        </div>
+      </div>
+      <div id="crossings-list" class="deck"></div>
+    </section>
+
+    <!-- Balades -->
+    <section id="view-rides" class="view hidden">
+      <div class="card">
+        <h2>Organiser une balade</h2>
+        <form id="ride-form" class="form grid">
+          <label class="span-all">Titre
+            <input name="title" required minlength="3" maxlength="100"
+                   placeholder="Cols du Vercors, départ tôt" />
+          </label>
+          <label>Ville de départ<input name="start_city" required /></label>
+          <label>Latitude départ<input type="number" step="0.0001" name="start_latitude" required /></label>
+          <label>Longitude départ<input type="number" step="0.0001" name="start_longitude" required /></label>
+          <label>Date et heure<input type="datetime-local" name="start_at" required /></label>
+          <label>Distance (km)<input type="number" name="distance_km" min="0" max="5000" value="200" /></label>
+          <label>Rythme<select name="pace" id="ride-pace" required></select></label>
+          <label>Type de route<select name="route_type" id="ride-route" required></select></label>
+          <label>Participants max<input type="number" name="max_participants" min="2" max="100" value="8" /></label>
+          <label>Autorisation
+            <select name="visibility" id="ride-visibility" required></select>
+          </label>
+          <fieldset class="span-all">
+            <legend>Motos bienvenues (aucune sélection = toutes)</legend>
+            <div id="ride-categories" class="chips"></div>
+          </fieldset>
+          <label class="span-all">Description
+            <textarea name="description" rows="2" maxlength="2000"
+                      placeholder="Rythme, pauses, niveau attendu…"></textarea>
+          </label>
+          <div class="row span-all">
+            <button type="submit" class="primary">Créer la balade</button>
+          </div>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Balades à venir</h2>
+        <div id="rides-list" class="deck"></div>
+      </div>
+    </section>
+
     <!-- Sécurité et confidentialité -->
     <section id="view-security" class="view hidden">
       <div class="card">

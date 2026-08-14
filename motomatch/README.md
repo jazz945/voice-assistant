@@ -48,6 +48,15 @@ d'environnement `MOTOMATCH_DB`.
 - **Like / pass et matchs** — un match est créé dès que le like est réciproque ;
   les profils déjà évalués disparaissent du deck.
 - **Messagerie** — conversation par match, réservée aux deux participants.
+- **Croisements** — comme Happn, mais pour la route : quand deux motards passent
+  au même endroit au même moment, l'application le retient et précise *comment*
+  ils se sont croisés (en roulant ou à l'arrêt, en sens inverse ou dans le même
+  sens). Un **salut motard** peut être envoyé ; s'il est rendu, c'est un match.
+  Opt-in strict, aucune coordonnée GPS conservée — voir [SECURITY.md](SECURITY.md).
+- **Balades** — créer une sortie (départ, date, distance, rythme, type de route,
+  motos bienvenues) avec trois niveaux d'**autorisation** : ouverte à tous,
+  réservée à ses matchs, ou sur validation de l'organisateur. Le point de
+  rendez-vous exact n'est révélé qu'aux participants acceptés.
 
 ## Score de compatibilité
 
@@ -96,6 +105,18 @@ faire évoluer le classement.
 | `GET` | `/api/blocks` | Liste des personnes bloquées. |
 | `DELETE` | `/api/blocks/{user_id}` | Débloque un utilisateur. |
 | `POST` | `/api/reports` | Signale un utilisateur (et le bloque). |
+| `PUT` | `/api/me/crossings` | Active ou coupe les croisements (coupure = effacement). |
+| `POST` | `/api/crossings/ping` | Signale une position (réduite à une cellule). |
+| `GET` | `/api/crossings` | Motards croisés, avec contexte et sens. |
+| `POST` | `/api/crossings/{id}/salut` | Salut motard ; rendu, il crée un match. |
+| `DELETE` | `/api/crossings` | Efface tout l'historique de croisements. |
+| `POST` | `/api/rides` | Crée une balade. |
+| `GET` | `/api/rides` | Balades à venir visibles. Filtres : `max_distance_km`, `pace`, `route_type`. |
+| `GET` | `/api/rides/{id}` | Détail et participants. |
+| `POST` | `/api/rides/{id}/join` | Rejoint, ou dépose une demande. |
+| `DELETE` | `/api/rides/{id}/join` | Se désiste. |
+| `POST` | `/api/rides/{id}/participants/{user_id}` | Accepte ou refuse une demande (organisateur). |
+| `DELETE` | `/api/rides/{id}` | Annule la balade (organisateur). |
 
 Les réponses de `/api/discover` et `/api/matches` **ne contiennent jamais** les
 coordonnées GPS d'autrui, et les distances sont arrondies par paliers.
@@ -120,6 +141,7 @@ motomatch/
 ├── config.py       configuration par variables d'environnement
 ├── matching.py     score de compatibilité et distance géographique
 ├── privacy.py      grille géographique, anti-trilatération
+├── crossings.py    détection et classification des croisements
 ├── schemas.py      validation des entrées (Pydantic)
 ├── repository.py   requêtes SQL
 ├── db.py           schéma SQLite et connexions
@@ -131,7 +153,7 @@ motomatch/
 │   └── ratelimit.py  limitation de débit et verrouillage
 ├── seed.py         profils de démonstration
 ├── static/         interface web (HTML/CSS/JS sans dépendance)
-└── tests/          97 tests (algorithme, API, sécurité)
+└── tests/          138 tests (algorithme, API, sécurité, croisements, balades)
 ```
 
 ## Tests
@@ -165,4 +187,6 @@ et [DEPLOIEMENT_STORES.md](DEPLOIEMENT_STORES.md) — les principaux :
 - signalements collectés mais sans interface de modération ;
 - limitation de débit mono-processus (SQLite), à porter sur Redis ;
 - messagerie sans chiffrement de bout en bout ni temps réel (WebSocket) ;
+- croisements : une position déclarée par un client modifié n'est pas détectée ;
+- balades sans messagerie de groupe ni rappel avant le départ ;
 - aucun audit de sécurité externe n'a été mené.

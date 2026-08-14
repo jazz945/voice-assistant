@@ -19,6 +19,12 @@ PROFILE_COLUMNS = (
     "experience_years, annual_km, max_travel_km, has_passenger_seat, photo_url, updated_at"
 )
 
+# Ces requêtes joignent souvent le profil à d'autres tables (matchs, croisements).
+# La sérialisation doit donc filtrer sur ce jeu de champs et lui seul : sans quoi
+# des colonnes techniques — dont `cell_id`, la cellule de géolocalisation —
+# ressortiraient dans la réponse.
+PROFILE_FIELDS = frozenset(column.strip() for column in PROFILE_COLUMNS.split(","))
+
 # Condition réutilisée : ni l'un ni l'autre n'a bloqué son vis-à-vis.
 _NOT_BLOCKED = """
     NOT EXISTS (
@@ -258,6 +264,289 @@ def count_pending_reports(conn: sqlite3.Connection, reported_id: int) -> int:
     return int(row["n"])
 
 
+# --- Croisements ------------------------------------------------------------
+
+
+def set_crossings_enabled(conn: sqlite3.Connection, user_id: int, enabled: bool) -> None:
+    conn.execute("UPDATE users SET crossings_enabled = ? WHERE id = ?", (int(enabled), user_id))
+
+
+def record_ping(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cell: str,
+    bucket: str,
+    speed_kmh: float | None,
+    heading_deg: float | None,
+    ride_id: int | None,
+) -> None:
+    conn.execute(
+        "INSERT INTO location_pings (user_id, cell_id, time_bucket, speed_kmh, heading_deg, ride_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, cell, bucket, speed_kmh, heading_deg, ride_id),
+    )
+
+
+def find_nearby_pings(
+    conn: sqlite3.Connection, user_id: int, cells: list[str], window_seconds: int
+) -> list[sqlite3.Row]:
+    """Dernier ping de chaque autre motard présent dans les cellules voisines.
+
+    Ne remonte que les comptes ayant activé les croisements et non bloqués : la
+    réciprocité est une règle de la fonction, pas une option d'affichage.
+    """
+    placeholders = ",".join("?" for _ in cells)
+    return conn.execute(
+        f"""
+        SELECT p.user_id, p.cell_id, p.speed_kmh, p.heading_deg, p.ride_id,
+               MAX(p.created_at) AS seen_at
+        FROM location_pings p
+        JOIN users u ON u.id = p.user_id
+        WHERE p.cell_id IN ({placeholders})
+          AND p.user_id != ?
+          AND p.created_at > datetime('now', ?)
+          AND u.deleted_at IS NULL
+          AND u.crossings_enabled = 1
+          AND NOT EXISTS (
+              SELECT 1 FROM blocks b
+              WHERE (b.blocker_id = ? AND b.blocked_id = p.user_id)
+                 OR (b.blocker_id = p.user_id AND b.blocked_id = ?)
+          )
+        GROUP BY p.user_id
+        """,
+        (*cells, user_id, f"-{window_seconds} seconds", user_id, user_id),
+    ).fetchall()
+
+
+def record_crossing(
+    conn: sqlite3.Connection,
+    user_id: int,
+    other_id: int,
+    cell: str,
+    bucket: str,
+    context: str,
+    direction: str,
+    ride_id: int | None,
+) -> bool:
+    """Enregistre un croisement. Retourne False s'il était déjà connu."""
+    a, b = sorted((user_id, other_id))
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO crossings "
+        "(user_a_id, user_b_id, cell_id, time_bucket, context, direction, ride_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (a, b, cell, bucket, context, direction, ride_id),
+    )
+    return cursor.rowcount > 0
+
+
+def list_crossings(conn: sqlite3.Connection, user_id: int, limit: int) -> list[sqlite3.Row]:
+    """Croisements groupés par personne, du plus récent au plus ancien.
+
+    Les personnes déjà évaluées dans la découverte restent affichées ici : un
+    croisement réel est une information différente d'un profil proposé.
+    """
+    return conn.execute(
+        f"""
+        SELECT c.other_id AS user_id, c.times, c.last_seen_at, c.cell_id,
+               c.context, c.direction, c.ride_id, c.crossing_id,
+               c.my_salut, c.their_salut, {PROFILE_COLUMNS}
+        FROM (
+            SELECT CASE WHEN user_a_id = :uid THEN user_b_id ELSE user_a_id END AS other_id,
+                   COUNT(*) AS times,
+                   MAX(created_at) AS last_seen_at,
+                   MAX(id) AS crossing_id,
+                   MAX(CASE WHEN user_a_id = :uid THEN salut_a ELSE salut_b END) AS my_salut,
+                   MAX(CASE WHEN user_a_id = :uid THEN salut_b ELSE salut_a END) AS their_salut,
+                   cell_id, context, direction, ride_id
+            FROM crossings
+            WHERE user_a_id = :uid OR user_b_id = :uid
+            GROUP BY other_id
+        ) c
+        JOIN profiles p ON p.user_id = c.other_id
+        JOIN users u ON u.id = c.other_id AND u.deleted_at IS NULL
+        WHERE {_NOT_BLOCKED}
+        ORDER BY c.last_seen_at DESC
+        LIMIT :limit
+        """,
+        {"uid": user_id, "limit": limit},
+    ).fetchall()
+
+
+def get_crossing_for_user(
+    conn: sqlite3.Connection, crossing_id: int, user_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM crossings WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)",
+        (crossing_id, user_id, user_id),
+    ).fetchone()
+
+
+def send_salut(conn: sqlite3.Connection, crossing_id: int, user_id: int) -> bool:
+    """Enregistre le salut. Retourne True si l'autre avait déjà salué (salut rendu)."""
+    crossing = conn.execute("SELECT * FROM crossings WHERE id = ?", (crossing_id,)).fetchone()
+    column = "salut_a" if int(crossing["user_a_id"]) == user_id else "salut_b"
+    other_column = "salut_b" if column == "salut_a" else "salut_a"
+    conn.execute(f"UPDATE crossings SET {column} = 1 WHERE id = ?", (crossing_id,))
+    return bool(crossing[other_column])
+
+
+def purge_crossing_data(conn: sqlite3.Connection, user_id: int) -> int:
+    """Efface positions et croisements d'un utilisateur, à sa demande."""
+    pings = conn.execute("DELETE FROM location_pings WHERE user_id = ?", (user_id,)).rowcount
+    crossings = conn.execute(
+        "DELETE FROM crossings WHERE user_a_id = ? OR user_b_id = ?", (user_id, user_id)
+    ).rowcount
+    return pings + crossings
+
+
+def purge_old_pings(conn: sqlite3.Connection, retention_hours: int) -> int:
+    """Rétention courte : les positions ne survivent pas à la journée."""
+    return conn.execute(
+        "DELETE FROM location_pings WHERE created_at < datetime('now', ?)",
+        (f"-{retention_hours} hours",),
+    ).rowcount
+
+
+# --- Balades ----------------------------------------------------------------
+
+RIDE_COLUMNS = (
+    "r.id, r.organiser_id, r.title, r.description, r.start_city, r.start_latitude, "
+    "r.start_longitude, r.start_at, r.distance_km, r.pace, r.route_type, "
+    "r.bike_categories, r.max_participants, r.visibility, r.status, r.created_at"
+)
+
+
+def create_ride(conn: sqlite3.Connection, organiser_id: int, ride: dict[str, Any]) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO rides (
+            organiser_id, title, description, start_city, start_latitude, start_longitude,
+            start_at, distance_km, pace, route_type, bike_categories, max_participants, visibility
+        ) VALUES (
+            :organiser_id, :title, :description, :start_city, :start_latitude, :start_longitude,
+            :start_at, :distance_km, :pace, :route_type, :bike_categories, :max_participants,
+            :visibility
+        )
+        """,
+        {"organiser_id": organiser_id, **ride},
+    )
+    ride_id = int(cursor.lastrowid)
+    # L'organisateur est participant d'office.
+    conn.execute(
+        "INSERT INTO ride_participants (ride_id, user_id, status) VALUES (?, ?, 'accepte')",
+        (ride_id, organiser_id),
+    )
+    return ride_id
+
+
+def get_ride(conn: sqlite3.Connection, ride_id: int) -> sqlite3.Row | None:
+    return conn.execute(f"SELECT {RIDE_COLUMNS} FROM rides r WHERE r.id = ?", (ride_id,)).fetchone()
+
+
+def list_visible_rides(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
+    """Balades à venir que cet utilisateur a le droit de voir.
+
+    L'autorisation `matchs` restreint la visibilité aux personnes déjà matchées
+    avec l'organisateur ; `public` et `sur-demande` sont visibles de tous. Dans
+    tous les cas, un blocage masque la balade des deux côtés.
+    """
+    return conn.execute(
+        f"""
+        SELECT {RIDE_COLUMNS},
+               (SELECT COUNT(*) FROM ride_participants rp
+                 WHERE rp.ride_id = r.id AND rp.status = 'accepte') AS accepted_count,
+               (SELECT status FROM ride_participants rp
+                 WHERE rp.ride_id = r.id AND rp.user_id = :uid) AS my_status,
+               po.display_name AS organiser_name
+        FROM rides r
+        JOIN users u ON u.id = r.organiser_id AND u.deleted_at IS NULL
+        LEFT JOIN profiles po ON po.user_id = r.organiser_id
+        WHERE r.status = 'ouverte'
+          AND r.start_at > datetime('now')
+          AND NOT EXISTS (
+              SELECT 1 FROM blocks b
+              WHERE (b.blocker_id = :uid AND b.blocked_id = r.organiser_id)
+                 OR (b.blocker_id = r.organiser_id AND b.blocked_id = :uid)
+          )
+          AND (
+              r.visibility IN ('public', 'sur-demande')
+              OR r.organiser_id = :uid
+              OR EXISTS (
+                  SELECT 1 FROM matches m
+                  WHERE (m.user_a_id = :uid AND m.user_b_id = r.organiser_id)
+                     OR (m.user_b_id = :uid AND m.user_a_id = r.organiser_id)
+              )
+          )
+        ORDER BY r.start_at
+        """,
+        {"uid": user_id},
+    ).fetchall()
+
+
+def list_ride_participants(conn: sqlite3.Connection, ride_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT rp.user_id, rp.status, rp.created_at, p.display_name, p.bike_brand,
+               p.bike_model, p.bike_category, p.pace, p.city
+        FROM ride_participants rp
+        LEFT JOIN profiles p ON p.user_id = rp.user_id
+        JOIN users u ON u.id = rp.user_id AND u.deleted_at IS NULL
+        WHERE rp.ride_id = ?
+        ORDER BY rp.created_at
+        """,
+        (ride_id,),
+    ).fetchall()
+
+
+def get_participation(
+    conn: sqlite3.Connection, ride_id: int, user_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM ride_participants WHERE ride_id = ? AND user_id = ?", (ride_id, user_id)
+    ).fetchone()
+
+
+def count_accepted_participants(conn: sqlite3.Connection, ride_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM ride_participants WHERE ride_id = ? AND status = 'accepte'",
+        (ride_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def join_ride(conn: sqlite3.Connection, ride_id: int, user_id: int, status: str) -> None:
+    conn.execute(
+        "INSERT INTO ride_participants (ride_id, user_id, status) VALUES (?, ?, ?) "
+        "ON CONFLICT(ride_id, user_id) DO UPDATE SET status = excluded.status",
+        (ride_id, user_id, status),
+    )
+
+
+def leave_ride(conn: sqlite3.Connection, ride_id: int, user_id: int) -> bool:
+    cursor = conn.execute(
+        "DELETE FROM ride_participants WHERE ride_id = ? AND user_id = ?", (ride_id, user_id)
+    )
+    return cursor.rowcount > 0
+
+
+def set_participation_status(
+    conn: sqlite3.Connection, ride_id: int, user_id: int, status: str
+) -> bool:
+    cursor = conn.execute(
+        "UPDATE ride_participants SET status = ? WHERE ride_id = ? AND user_id = ?",
+        (status, ride_id, user_id),
+    )
+    return cursor.rowcount > 0
+
+
+def cancel_ride(conn: sqlite3.Connection, ride_id: int, organiser_id: int) -> bool:
+    cursor = conn.execute(
+        "UPDATE rides SET status = 'annulee' WHERE id = ? AND organiser_id = ? AND status = 'ouverte'",
+        (ride_id, organiser_id),
+    )
+    return cursor.rowcount > 0
+
+
 # --- Export des données (RGPD article 20) -----------------------------------
 
 
@@ -302,6 +591,26 @@ def export_user_data(conn: sqlite3.Connection, user_id: int) -> dict[str, Any]:
             conn.execute(
                 "SELECT device_label, created_at, last_used_at, revoked_at FROM sessions "
                 "WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        ),
+        "croisements": rows_to_dicts(
+            conn.execute(
+                "SELECT cell_id, time_bucket, context, direction, created_at FROM crossings "
+                "WHERE user_a_id = ? OR user_b_id = ?",
+                (user_id, user_id),
+            ).fetchall()
+        ),
+        "balades_organisees": rows_to_dicts(
+            conn.execute(
+                "SELECT id, title, start_city, start_at, visibility, status FROM rides "
+                "WHERE organiser_id = ?",
+                (user_id,),
+            ).fetchall()
+        ),
+        "participations": rows_to_dicts(
+            conn.execute(
+                "SELECT ride_id, status, created_at FROM ride_participants WHERE user_id = ?",
                 (user_id,),
             ).fetchall()
         ),

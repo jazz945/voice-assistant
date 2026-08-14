@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import audit
+from . import audit, crossings
 from . import repository as repo
 from .config import Settings, get_settings
 from .db import get_connection, init_db
@@ -44,16 +44,22 @@ from .middleware import RequestSizeLimitMiddleware, SecurityHeadersMiddleware
 from .privacy import bucket_distance, public_profile, snap_to_grid
 from .schemas import (
     REPORT_REASONS,
+    RIDE_ROUTE_TYPES,
+    RIDE_VISIBILITIES,
     AccountDeletionInput,
     BlockInput,
     Credentials,
+    CrossingSettingsInput,
     DiscoveryFilters,
+    LocationPingInput,
     MessageInput,
+    ParticipationDecisionInput,
     PasswordChangeInput,
     ProfileInput,
     RefreshInput,
     RegistrationInput,
     ReportInput,
+    RideInput,
     SwipeInput,
 )
 from .security import passwords, ratelimit, tokens
@@ -68,6 +74,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Ménage au démarrage : sessions périmées et compteurs de débit anciens.
         tokens.purge_expired(conn)
         ratelimit.purge_old_events(conn)
+        repo.purge_old_pings(conn, get_settings().ping_retention_hours)
     yield
 
 
@@ -207,8 +214,13 @@ def enforce_rate_limit(
 
 
 def own_profile_payload(row: sqlite3.Row) -> dict[str, Any]:
-    """Profil de l'utilisateur connecté : il voit ses propres coordonnées."""
-    data = dict(row)
+    """Profil de l'utilisateur connecté : il voit ses propres coordonnées.
+
+    On filtre sur les colonnes de profil : ces lignes proviennent souvent d'une
+    jointure (matchs, croisements) qui charrie des colonnes techniques n'ayant
+    rien à faire dans une réponse.
+    """
+    data = {key: value for key, value in dict(row).items() if key in repo.PROFILE_FIELDS}
     data["riding_styles"] = parse_styles(data.get("riding_styles"))
     data["has_passenger_seat"] = bool(data.get("has_passenger_seat"))
     data["age"] = age_from_birth_year(int(data["birth_year"]))
@@ -243,6 +255,8 @@ def meta(cfg: Annotated[Settings, Depends(config)]) -> dict[str, Any]:
         "riding_styles": list(RIDING_STYLES),
         "pace_levels": list(PACE_LEVELS),
         "report_reasons": list(REPORT_REASONS),
+        "ride_route_types": list(RIDE_ROUTE_TYPES),
+        "ride_visibilities": list(RIDE_VISIBILITIES),
         "password_min_length": cfg.password_min_length,
     }
 
@@ -468,6 +482,7 @@ def read_me(
         "user_id": user["id"],
         "email": user["email"],
         "created_at": user["created_at"],
+        "crossings_enabled": bool(user["crossings_enabled"]),
         "profile": own_profile_payload(profile) if profile else None,
     }
 
@@ -789,6 +804,371 @@ def report(
         detail=f"cible={payload.target_user_id} motif={payload.reason}",
     )
     return {"report_id": report_id, "blocked": True}
+
+
+# --- Croisements ------------------------------------------------------------
+
+
+@app.put("/api/me/crossings", tags=["croisements"])
+def set_crossings(
+    payload: CrossingSettingsInput,
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+) -> dict[str, Any]:
+    """Active ou coupe les croisements.
+
+    Couper la fonction efface immédiatement les positions déjà enregistrées :
+    désactiver doit vouloir dire « oubliez-moi », pas « mettez en pause ».
+    """
+    user_id = int(user["id"])
+    repo.set_crossings_enabled(conn, user_id, payload.enabled)
+    purged = 0
+    if not payload.enabled:
+        purged = conn.execute(
+            "DELETE FROM location_pings WHERE user_id = ?", (user_id,)
+        ).rowcount
+    audit.record(
+        conn,
+        audit.CROSSINGS_TOGGLED,
+        user_id=user_id,
+        ip=client_ip(request),
+        detail="active" if payload.enabled else "desactive",
+    )
+    return {"enabled": payload.enabled, "purged_pings": purged}
+
+
+@app.post("/api/crossings/ping", tags=["croisements"])
+def crossing_ping(
+    payload: LocationPingInput,
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+    cfg: Annotated[Settings, Depends(config)],
+) -> dict[str, Any]:
+    """Signale une position et détecte les croisements.
+
+    La position est réduite à une cellule dès cette ligne : ni latitude ni
+    longitude n'atteignent la base.
+    """
+    user_id = int(user["id"])
+    if not user["crossings_enabled"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "activez les croisements dans vos réglages avant d'envoyer une position",
+        )
+    enforce_rate_limit(
+        conn, "ping", str(user_id), cfg.rate_limit_ping, user_id=user_id, ip=client_ip(request)
+    )
+
+    cell = crossings.cell_id(payload.latitude, payload.longitude, cfg.crossing_cell_meters)
+    bucket = crossings.time_bucket(conn, cfg.crossing_bucket_minutes)
+    repo.record_ping(
+        conn, user_id, cell, bucket, payload.speed_kmh, payload.heading_deg, payload.ride_id
+    )
+
+    neighbours = crossings.neighbouring_cells(
+        payload.latitude, payload.longitude, cfg.crossing_cell_meters
+    )
+    new_crossings = 0
+    for other in repo.find_nearby_pings(
+        conn, user_id, neighbours, cfg.crossing_window_seconds
+    ):
+        context = crossings.classify_context(payload.speed_kmh, other["speed_kmh"])
+        direction = crossings.classify_direction(payload.heading_deg, other["heading_deg"])
+        # La balade rattachée au croisement est celle que les deux partagent.
+        shared_ride = payload.ride_id if payload.ride_id == other["ride_id"] else None
+        if repo.record_crossing(
+            conn, user_id, int(other["user_id"]), cell, bucket, context, direction, shared_ride
+        ):
+            new_crossings += 1
+
+    return {"recorded": True, "new_crossings": new_crossings}
+
+
+@app.get("/api/crossings", tags=["croisements"])
+def list_crossings(
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+    cfg: Annotated[Settings, Depends(config)],
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, Any]:
+    """Personnes croisées, de la plus récente à la plus ancienne.
+
+    Le lieu remonté est le **centre de la cellule**, jamais la position réelle de
+    l'autre personne — et le demandeur y était lui-même.
+    """
+    rows = repo.list_crossings(conn, int(user["id"]), limit)
+    items = []
+    for row in rows:
+        latitude, longitude = crossings.cell_centre(row["cell_id"], cfg.crossing_cell_meters)
+        items.append(
+            {
+                "crossing_id": row["crossing_id"],
+                "times": row["times"],
+                "last_seen_at": row["last_seen_at"],
+                "context": row["context"],
+                "direction": row["direction"],
+                "ride_id": row["ride_id"],
+                "summary": crossings.describe(row["context"], row["direction"], row["times"]),
+                "area": {"latitude": latitude, "longitude": longitude},
+                "salut_sent": bool(row["my_salut"]),
+                "salut_received": bool(row["their_salut"]),
+                "profile": other_profile_payload(row),
+            }
+        )
+    return {"count": len(items), "results": items}
+
+
+@app.post("/api/crossings/{crossing_id}/salut", tags=["croisements"])
+def salut(
+    crossing_id: int,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+) -> dict[str, Any]:
+    """Le salut motard : un signe, sans engager la conversation.
+
+    Si l'autre avait déjà salué, le salut est rendu et un match est créé — c'est
+    l'équivalent en ligne du signe de la main qu'on se rend sur la route.
+    """
+    user_id = int(user["id"])
+    crossing = repo.get_crossing_for_user(conn, crossing_id, user_id)
+    if crossing is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "croisement introuvable")
+
+    other_id = (
+        int(crossing["user_b_id"])
+        if int(crossing["user_a_id"]) == user_id
+        else int(crossing["user_a_id"])
+    )
+    if repo.is_blocked_either_way(conn, user_id, other_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "croisement introuvable")
+
+    returned = repo.send_salut(conn, crossing_id, user_id)
+    match_id = repo.create_match(conn, user_id, other_id) if returned else None
+    return {"salut_sent": True, "salut_returned": returned, "match_id": match_id}
+
+
+@app.delete("/api/crossings", tags=["croisements"])
+def purge_crossings(
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+) -> dict[str, int]:
+    """Efface toutes les positions et tous les croisements de l'utilisateur."""
+    user_id = int(user["id"])
+    deleted = repo.purge_crossing_data(conn, user_id)
+    audit.record(conn, audit.CROSSINGS_PURGED, user_id=user_id, ip=client_ip(request))
+    return {"deleted_rows": deleted}
+
+
+# --- Balades ----------------------------------------------------------------
+
+
+def ride_payload(
+    row: sqlite3.Row, *, viewer_id: int, is_participant: bool, extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Balade sérialisée.
+
+    Le point de rendez-vous exact n'est donné qu'aux participants acceptés et à
+    l'organisateur : une balade ouverte ne doit pas publier l'adresse précise
+    d'un rendez-vous à qui n'y va pas.
+    """
+    data = dict(row)
+    data["bike_categories"] = parse_styles(data.get("bike_categories"))
+    data["is_organiser"] = int(row["organiser_id"]) == viewer_id
+    if not (is_participant or data["is_organiser"]):
+        data.pop("start_latitude", None)
+        data.pop("start_longitude", None)
+    if extra:
+        data.update(extra)
+    return data
+
+
+@app.post("/api/rides", status_code=status.HTTP_201_CREATED, tags=["balades"])
+def create_ride(
+    payload: RideInput,
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    organiser: Annotated[sqlite3.Row, Depends(require_profile)],
+    cfg: Annotated[Settings, Depends(config)],
+) -> dict[str, Any]:
+    """Crée une balade. L'autorisation choisie décide de qui la voit et la rejoint."""
+    organiser_id = int(organiser["user_id"])
+    enforce_rate_limit(
+        conn, "ride", str(organiser_id), cfg.rate_limit_ride, user_id=organiser_id,
+        ip=client_ip(request),
+    )
+    values = payload.model_dump()
+    values["start_at"] = payload.start_at.isoformat()
+    values["bike_categories"] = ",".join(payload.bike_categories)
+    ride_id = repo.create_ride(conn, organiser_id, values)
+    return ride_payload(
+        repo.get_ride(conn, ride_id),
+        viewer_id=organiser_id,
+        is_participant=True,
+        extra={"accepted_count": 1, "my_status": "accepte"},
+    )
+
+
+@app.get("/api/rides", tags=["balades"])
+def list_rides(
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+    max_distance_km: int | None = Query(default=None, ge=1, le=2000),
+    pace: str | None = Query(default=None),
+    route_type: str | None = Query(default=None),
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, Any]:
+    """Balades à venir visibles par l'utilisateur, de la plus proche dans le temps."""
+    viewer_id = int(viewer["user_id"])
+    results: list[dict[str, Any]] = []
+    for row in repo.list_visible_rides(conn, viewer_id):
+        if pace and row["pace"] != pace.lower():
+            continue
+        if route_type and row["route_type"] != route_type.lower():
+            continue
+        distance = haversine_km(
+            viewer["latitude"], viewer["longitude"], row["start_latitude"], row["start_longitude"]
+        )
+        if max_distance_km is not None and distance > max_distance_km:
+            continue
+        results.append(
+            ride_payload(
+                row,
+                viewer_id=viewer_id,
+                is_participant=row["my_status"] == "accepte",
+                extra={
+                    "accepted_count": row["accepted_count"],
+                    "my_status": row["my_status"],
+                    "organiser_name": row["organiser_name"],
+                    # Distinct de `distance_km`, qui est la longueur du parcours.
+                    "distance_from_you_km": round(distance, 1),
+                    "spots_left": max(0, int(row["max_participants"]) - int(row["accepted_count"])),
+                },
+            )
+        )
+    return {"count": len(results), "results": results[:limit]}
+
+
+@app.get("/api/rides/{ride_id}", tags=["balades"])
+def read_ride(
+    ride_id: int,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+) -> dict[str, Any]:
+    viewer_id = int(viewer["user_id"])
+    ride = _visible_ride_or_404(conn, ride_id, viewer_id)
+    participation = repo.get_participation(conn, ride_id, viewer_id)
+    my_status = participation["status"] if participation else None
+    return ride_payload(
+        ride,
+        viewer_id=viewer_id,
+        is_participant=my_status == "accepte",
+        extra={
+            "my_status": my_status,
+            "accepted_count": repo.count_accepted_participants(conn, ride_id),
+            "participants": [
+                dict(row)
+                for row in repo.list_ride_participants(conn, ride_id)
+                # Les demandes en attente ne regardent que l'organisateur.
+                if row["status"] == "accepte" or int(ride["organiser_id"]) == viewer_id
+            ],
+        },
+    )
+
+
+def _visible_ride_or_404(
+    conn: sqlite3.Connection, ride_id: int, viewer_id: int
+) -> sqlite3.Row:
+    """Récupère une balade que ce visiteur a le droit de voir.
+
+    Passe par la même requête que la liste, pour qu'aucune règle d'autorisation
+    ne puisse diverger entre les deux chemins.
+    """
+    visible = {int(row["id"]) for row in repo.list_visible_rides(conn, viewer_id)}
+    ride = repo.get_ride(conn, ride_id)
+    if ride is None or (ride_id not in visible and int(ride["organiser_id"]) != viewer_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "balade introuvable")
+    return ride
+
+
+@app.post("/api/rides/{ride_id}/join", tags=["balades"])
+def join_ride(
+    ride_id: int,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+) -> dict[str, Any]:
+    """Rejoint une balade, ou dépose une demande si l'organisateur doit valider."""
+    viewer_id = int(viewer["user_id"])
+    ride = _visible_ride_or_404(conn, ride_id, viewer_id)
+
+    if ride["status"] != "ouverte":
+        raise HTTPException(status.HTTP_409_CONFLICT, "cette balade est annulée")
+    if int(ride["organiser_id"]) == viewer_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "vous organisez déjà cette balade")
+
+    # Une balade « sur-demande » place la personne en attente de validation.
+    requested = ride["visibility"] == "sur-demande"
+    if not requested and repo.count_accepted_participants(conn, ride_id) >= int(
+        ride["max_participants"]
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "cette balade est complète")
+
+    new_status = "demande" if requested else "accepte"
+    repo.join_ride(conn, ride_id, viewer_id, new_status)
+    return {"ride_id": ride_id, "status": new_status}
+
+
+@app.delete("/api/rides/{ride_id}/join", status_code=204, tags=["balades"])
+def leave_ride(
+    ride_id: int,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+) -> None:
+    viewer_id = int(viewer["user_id"])
+    ride = repo.get_ride(conn, ride_id)
+    if ride is not None and int(ride["organiser_id"]) == viewer_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "un organisateur ne peut pas quitter sa balade, il doit l'annuler",
+        )
+    if not repo.leave_ride(conn, ride_id, viewer_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "participation introuvable")
+
+
+@app.post("/api/rides/{ride_id}/participants/{participant_id}", tags=["balades"])
+def decide_participation(
+    ride_id: int,
+    participant_id: int,
+    payload: ParticipationDecisionInput,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+) -> dict[str, Any]:
+    """Accepte ou refuse une demande — réservé à l'organisateur."""
+    viewer_id = int(viewer["user_id"])
+    ride = repo.get_ride(conn, ride_id)
+    if ride is None or int(ride["organiser_id"]) != viewer_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "balade introuvable")
+
+    if payload.decision == "accepte" and repo.count_accepted_participants(conn, ride_id) >= int(
+        ride["max_participants"]
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "cette balade est complète")
+    if not repo.set_participation_status(conn, ride_id, participant_id, payload.decision):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "demande introuvable")
+    return {"ride_id": ride_id, "user_id": participant_id, "status": payload.decision}
+
+
+@app.delete("/api/rides/{ride_id}", status_code=204, tags=["balades"])
+def cancel_ride(
+    ride_id: int,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(current_user)],
+) -> None:
+    """Annule une balade — réservé à l'organisateur."""
+    if not repo.cancel_ride(conn, ride_id, int(viewer["id"])):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "balade introuvable")
 
 
 # --- Interface web ----------------------------------------------------------

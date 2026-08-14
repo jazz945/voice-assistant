@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at          TEXT NOT NULL DEFAULT (datetime('now')),
     password_changed_at TEXT NOT NULL DEFAULT (datetime('now')),
     age_attested_at     TEXT,
+    -- Les croisements sont désactivés tant que l'utilisateur ne les active pas.
+    crossings_enabled   INTEGER NOT NULL DEFAULT 0,
     deleted_at          TEXT
 );
 
@@ -129,6 +131,68 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Positions réduites à une cellule de grille et un créneau horaire : aucune
+-- coordonnée GPS brute n'est jamais écrite ici. Purgées au bout de 24 h.
+CREATE TABLE IF NOT EXISTS location_pings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cell_id     TEXT    NOT NULL,
+    time_bucket TEXT    NOT NULL,
+    speed_kmh   REAL,
+    heading_deg REAL,
+    ride_id     INTEGER REFERENCES rides(id) ON DELETE SET NULL,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- user_a_id < user_b_id : une paire, une ligne par cellule et créneau.
+CREATE TABLE IF NOT EXISTS crossings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_a_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_b_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cell_id     TEXT    NOT NULL,
+    time_bucket TEXT    NOT NULL,
+    context     TEXT    NOT NULL DEFAULT 'mixte',
+    direction   TEXT    NOT NULL DEFAULT 'inconnu',
+    ride_id     INTEGER REFERENCES rides(id) ON DELETE SET NULL,
+    -- Le « salut motard » : un signe envoyé sans engager la conversation.
+    salut_a     INTEGER NOT NULL DEFAULT 0,
+    salut_b     INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_a_id, user_b_id, cell_id, time_bucket)
+);
+
+CREATE TABLE IF NOT EXISTS rides (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    organiser_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title            TEXT    NOT NULL,
+    description      TEXT    NOT NULL DEFAULT '',
+    start_city       TEXT    NOT NULL,
+    start_latitude   REAL    NOT NULL,
+    start_longitude  REAL    NOT NULL,
+    start_at         TEXT    NOT NULL,
+    distance_km      INTEGER NOT NULL DEFAULT 0,
+    pace             TEXT    NOT NULL,
+    route_type       TEXT    NOT NULL,
+    bike_categories  TEXT    NOT NULL DEFAULT '',
+    max_participants INTEGER NOT NULL DEFAULT 8,
+    -- « Autorisation » de la balade : qui la voit et qui peut la rejoindre.
+    visibility       TEXT    NOT NULL DEFAULT 'public'
+                     CHECK (visibility IN ('public', 'matchs', 'sur-demande')),
+    status           TEXT    NOT NULL DEFAULT 'ouverte'
+                     CHECK (status IN ('ouverte', 'annulee')),
+    created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ride_participants (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ride_id    INTEGER NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status     TEXT    NOT NULL DEFAULT 'accepte'
+               CHECK (status IN ('demande', 'accepte', 'refuse')),
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (ride_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS rate_limit_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     bucket     TEXT NOT NULL,
@@ -145,6 +209,12 @@ CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_rate_limit ON rate_limit_events(bucket, key, created_at);
+CREATE INDEX IF NOT EXISTS idx_pings_lookup ON location_pings(cell_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_pings_user ON location_pings(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_crossings_a ON crossings(user_a_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_crossings_b ON crossings(user_b_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_rides_start ON rides(start_at, status);
+CREATE INDEX IF NOT EXISTS idx_ride_participants ON ride_participants(ride_id, status);
 """
 
 

@@ -85,6 +85,35 @@ Trois mesures se combinent (`privacy.py`) :
 La distance affichée est en outre arrondie par paliers de 5 km — utile, mais
 insuffisant à soi seul, d'où la grille.
 
+## Croisements (fonction « qui ai-je croisé »)
+
+C'est la fonction la plus intrusive de l'application — un suivi de position, en
+tension directe avec le reste de ce document. Elle est donc traitée à part :
+
+- **Opt-in strict**, désactivée par défaut. Rien n'est enregistré tant que
+  l'utilisateur ne l'a pas activée.
+- **Aucune coordonnée GPS n'est jamais écrite en base.** La table
+  `location_pings` ne comporte même pas de colonne `latitude` : la position est
+  réduite dès la réception à un identifiant de cellule de 500 m et à un créneau
+  de 15 minutes, puis jetée. Un test vérifie l'absence de ces colonnes.
+- **Rétention de 24 heures** sur les positions ; seuls les croisements avérés
+  survivent, et sans coordonnées.
+- **Réciprocité obligatoire** : un croisement n'existe que si les deux personnes
+  ont activé la fonction. On ne peut pas rester invisible tout en continuant à
+  voir les autres.
+- **Effacement immédiat** : couper la fonction purge les positions sur-le-champ,
+  et `DELETE /api/crossings` efface tout l'historique des deux côtés.
+- Les personnes bloquées ne se croisent jamais.
+- La zone remontée est **le centre de la cellule**, jamais la position réelle de
+  l'autre — et le demandeur y était lui-même. La cellule brute (`cell_id`) n'est
+  jamais exposée : un test le vérifie explicitement, après qu'une jointure l'a
+  effectivement laissée fuiter pendant le développement.
+
+Ce que la fonction révèle, par construction : que deux personnes ayant toutes
+deux consenti se sont trouvées dans la même zone de 500 m au même quart d'heure.
+C'est le produit. Ce qu'elle ne révèle jamais : un trajet, une position exacte,
+ou quoi que ce soit sur quelqu'un qui ne l'a pas activée.
+
 ## Sécurité des personnes
 
 Fonctions exigées par l'App Store (règle 1.2, contenu généré par les
@@ -96,6 +125,11 @@ utilisateurs) et par le Play Store :
 - **Discrétion du blocage** : une personne bloquée reçoit `404 profil
   introuvable`, jamais `403`. Elle ne doit pas apprendre qu'elle a été bloquée.
 - **Signalement** avec motif typé, qui bloque automatiquement dans la foulée.
+- **Point de rendez-vous protégé** : les coordonnées exactes du départ d'une
+  balade ne sont données qu'aux participants acceptés et à l'organisateur. Une
+  balade ouverte ne publie pas l'adresse précise d'un rendez-vous à qui n'y va
+  pas, et une balade « sur validation » laisse l'organisateur filtrer avant de
+  la livrer.
 - **Attestation de majorité** à l'inscription, âge revalidé à la saisie du profil,
   et **année de naissance figée** ensuite : un compte créé mineur ne peut pas se
   vieillir après coup.
@@ -183,7 +217,12 @@ ouverture au public.
 8. **SQLite** convient au développement et à un petit volume ; PostgreSQL avec
    chiffrement au repos s'impose en production.
 9. **Le champ `seeking` est du texte libre** et n'est pas utilisé comme filtre.
-10. **Pas d'audit externe.** Aucune revue de sécurité indépendante n'a été menée
+10. **Croisements : pas de détection d'usurpation de position.** Un client
+    modifié peut déclarer une position fausse pour provoquer des croisements
+    fictifs. Les parades usuelles (attestation d'intégrité de l'application,
+    contrôle de plausibilité des vitesses entre deux pings) restent à ajouter.
+11. **Balades sans messagerie de groupe** ni rappel avant le départ.
+12. **Pas d'audit externe.** Aucune revue de sécurité indépendante n'a été menée
     sur ce code.
 
 ## Signaler une vulnérabilité

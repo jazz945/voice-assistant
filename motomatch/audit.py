@@ -29,6 +29,8 @@ SESSIONS_REVOKED_ALL = "session.revoked_all"
 USER_BLOCKED = "safety.blocked"
 USER_UNBLOCKED = "safety.unblocked"
 USER_REPORTED = "safety.reported"
+CROSSINGS_TOGGLED = "crossings.toggled"
+CROSSINGS_PURGED = "crossings.purged"
 RATE_LIMITED = "security.rate_limited"
 
 

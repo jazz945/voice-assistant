@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     rate_limit_message: tuple[int, int] = (60, 3600)
     rate_limit_swipe: tuple[int, int] = (300, 3600)
     rate_limit_report: tuple[int, int] = (20, 86400)
+    rate_limit_ping: tuple[int, int] = (240, 3600)
+    rate_limit_ride: tuple[int, int] = (20, 86400)
 
     # --- Confidentialité géographique ---
     # Les coordonnées d'autrui ne sortent jamais de l'API ; les distances sont
@@ -54,6 +56,15 @@ class Settings(BaseSettings):
     # trilatération (cf. privacy.py).
     geo_grid_meters: int = Field(default=1000, ge=100, le=20_000)
     distance_bucket_km: int = Field(default=5, ge=1, le=50)
+
+    # --- Croisements (opt-in, cf. crossings.py) ---
+    # Taille de la cellule dans laquelle deux motards sont réputés s'être
+    # croisés, et fenêtre temporelle correspondante.
+    crossing_cell_meters: int = Field(default=500, ge=100, le=5000)
+    crossing_window_seconds: int = Field(default=600, ge=60, le=3600)
+    crossing_bucket_minutes: int = Field(default=15, ge=5, le=120)
+    # Rétention des positions : volontairement courte.
+    ping_retention_hours: int = Field(default=24, ge=1, le=168)
 
     # --- Exposition HTTP ---
     # Origines autorisées en CORS. Une application mobile native n'envoie pas
