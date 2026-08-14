@@ -64,8 +64,16 @@ class Settings(BaseSettings):
     # Affichage uniquement — le prix qui fait foi est celui du prestataire.
     price_monthly_cents: int = Field(default=999, ge=0)
     price_biannual_cents: int = Field(default=3999, ge=0)
-    # Secret de vérification des webhooks de paiement. Sans lui, n'importe qui
-    # s'offrirait un abonnement en appelant l'URL.
+    # Clés Stripe. Elles ne transitent jamais par le code source ni par le
+    # dépôt : renseignées dans .env au déploiement, lues ici, et rien d'autre.
+    stripe_secret_key: str = ""
+    stripe_price_monthly: str = ""
+    stripe_price_biannual: str = ""
+    # URL de retour après paiement, sur le site public.
+    stripe_success_url: str = "http://localhost:8000/?abonnement=ok"
+    stripe_cancel_url: str = "http://localhost:8000/?abonnement=annule"
+    # Secret de vérification des webhooks. Sans lui, n'importe qui s'offrirait
+    # un abonnement en appelant l'URL.
     payment_webhook_secret: str = ""
     payment_webhook_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
 
@@ -108,6 +116,26 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @property
+    def stripe_configured(self) -> bool:
+        """Vrai seulement si tout le nécessaire est présent.
+
+        Une configuration à moitié faite doit se voir tout de suite, pas au
+        moment où quelqu'un clique sur « S'abonner ».
+        """
+        return bool(
+            self.stripe_secret_key
+            and self.stripe_price_monthly
+            and self.stripe_price_biannual
+            and self.payment_webhook_secret
+        )
+
+    def stripe_price_for(self, offer_code: str) -> str:
+        return {
+            "plus_1m": self.stripe_price_monthly,
+            "plus_6m": self.stripe_price_biannual,
+        }.get(offer_code, "")
 
     @property
     def is_production(self) -> bool:

@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import audit, billing, crossings, payments
+from .stripe_gateway import StripeError, StripeGateway
 from . import repository as repo
 from .config import Settings, get_settings
 from .db import get_connection, init_db
@@ -1283,14 +1284,40 @@ def checkout(
 
     audit.record(conn, audit.CHECKOUT_STARTED, user_id=user_id, ip=client_ip(request),
                  detail=offer.code)
-    return {
-        "offer": offer.payload(),
-        "status": "prestataire_non_configure",
-        "detail": (
-            "Brancher ici la création de session du prestataire de paiement. "
-            "Sur iOS et Android, la facturation du store est obligatoire."
-        ),
-    }
+
+    if not cfg.stripe_configured:
+        return {
+            "offer": offer.payload(),
+            "status": "prestataire_non_configure",
+            "detail": (
+                "Renseigner MOTOMATCH_STRIPE_SECRET_KEY, les identifiants de tarif "
+                "et MOTOMATCH_PAYMENT_WEBHOOK_SECRET. Sur iOS et Android, la "
+                "facturation du store reste obligatoire."
+            ),
+        }
+
+    try:
+        session = StripeGateway(cfg.stripe_secret_key).create_checkout_session(
+            price_id=cfg.stripe_price_for(offer.code),
+            user_id=user_id,
+            success_url=cfg.stripe_success_url,
+            cancel_url=cfg.stripe_cancel_url,
+            customer_email=user["email"],
+            # Une session par utilisateur et par offre tant qu'elle n'a pas
+            # abouti : un double clic ne crée pas deux paiements.
+            idempotency_key=f"checkout-{user_id}-{offer.code}",
+        )
+    except StripeError as error:
+        # Le message de Stripe ne contient pas de secret, mais on ne renvoie
+        # tout de même qu'un texte générique : les détails vont au journal.
+        audit.record(conn, audit.PAYMENT_REJECTED, user_id=user_id,
+                     ip=client_ip(request), detail=str(error)[:200])
+        conn.commit()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "le prestataire de paiement est indisponible"
+        ) from None
+
+    return {"offer": offer.payload(), "status": "redirection", "checkout_url": session.url}
 
 
 @app.delete("/api/subscription", tags=["abonnement"])
@@ -1345,28 +1372,39 @@ async def subscription_webhook(
 
     event_id = str(event.get("id", ""))
     kind = str(event.get("type", ""))
-    user_id = event.get("user_id")
     if not event_id or not kind:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "évènement incomplet")
 
-    # Idempotence : un prestataire rejoue ses webhooks au moindre doute.
-    if not repo.record_payment_event(conn, payments.STRIPE, event_id, kind, user_id):
+    parsed = payments.parse_stripe_event(event)
+
+    # Idempotence avant tout traitement : un prestataire rejoue ses webhooks au
+    # moindre doute, et le rejeu doit être sans effet même sur un type ignoré.
+    if not repo.record_payment_event(
+        conn, payments.STRIPE, event_id, kind, parsed.user_id if parsed else None
+    ):
         return {"handled": False, "reason": "deja_traite"}
 
-    if kind not in payments.HANDLED_EVENTS:
+    if parsed is None:
         return {"handled": False, "reason": "evenement_ignore"}
-    if not isinstance(user_id, int) or repo.get_user(conn, user_id) is None:
+
+    # L'identifiant de compte peut manquer sur un renouvellement : on retombe
+    # alors sur l'identifiant client Stripe mémorisé au premier paiement.
+    user_id = parsed.user_id
+    if user_id is None and parsed.customer_id:
+        existing = repo.find_subscription_by_customer(conn, parsed.customer_id)
+        user_id = int(existing["user_id"]) if existing else None
+    if user_id is None or repo.get_user(conn, user_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "compte inconnu")
 
-    if kind == payments.SUBSCRIPTION_CANCELLED:
+    if parsed.action == payments.SUBSCRIPTION_CANCELLED:
         repo.cancel_subscription(conn, user_id)
     else:
         repo.upsert_subscription(
-            conn, user_id, billing.PLUS, event.get("expires_at"),
-            payments.STRIPE, event.get("subscription_id"),
+            conn, user_id, billing.PLUS, parsed.expires_at,
+            payments.STRIPE, parsed.subscription_id, parsed.customer_id,
         )
     audit.record(conn, audit.SUBSCRIPTION_UPDATED, user_id=user_id, detail=kind)
-    return {"handled": True, "type": kind}
+    return {"handled": True, "type": kind, "action": parsed.action}
 
 
 @app.get("/api/likes/received", tags=["abonnement"])

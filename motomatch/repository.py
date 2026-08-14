@@ -641,20 +641,34 @@ def upsert_subscription(
     expires_at: str | None,
     provider: str,
     external_id: str | None = None,
+    customer_id: str | None = None,
 ) -> None:
     conn.execute(
         """
-        INSERT INTO subscriptions (user_id, tier, expires_at, provider, external_id, cancelled_at)
-        VALUES (?, ?, ?, ?, ?, NULL)
+        INSERT INTO subscriptions
+            (user_id, tier, expires_at, provider, external_id, customer_id, cancelled_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(user_id) DO UPDATE SET
             tier = excluded.tier,
             expires_at = excluded.expires_at,
             provider = excluded.provider,
             external_id = excluded.external_id,
+            -- Un renouvellement sans identifiant client ne doit pas effacer
+            -- celui qu'on a mémorisé au premier paiement : c'est lui qui permet
+            -- de retrouver le compte sur les évènements suivants.
+            customer_id = COALESCE(excluded.customer_id, subscriptions.customer_id),
             cancelled_at = NULL
         """,
-        (user_id, tier, expires_at, provider, external_id),
+        (user_id, tier, expires_at, provider, external_id, customer_id),
     )
+
+
+def find_subscription_by_customer(
+    conn: sqlite3.Connection, customer_id: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM subscriptions WHERE customer_id = ?", (customer_id,)
+    ).fetchone()
 
 
 def cancel_subscription(conn: sqlite3.Connection, user_id: int) -> bool:

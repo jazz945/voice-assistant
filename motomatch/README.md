@@ -91,6 +91,10 @@ Trois endroits font mal, et ils sont commentés là où ils agissent :
    le score non biaisé à côté (`compatibility_score`), pour qu'un profil remonté
    par l'argent ne passe jamais pour un profil réellement compatible.
 
+Le paiement passe par Stripe côté web. Tout le code est en place ; la mise en
+route tient en quatre variables d'environnement, décrites dans
+**[PAIEMENT_STRIPE.md](PAIEMENT_STRIPE.md)**.
+
 ## Score de compatibilité
 
 Le calcul vit dans `matching.py`. Six composantes, chacune normalisée entre 0 et
@@ -183,7 +187,8 @@ motomatch/
 ├── privacy.py      grille géographique, anti-trilatération
 ├── crossings.py    détection et classification des croisements
 ├── billing.py      paliers, quotas, boosts
-├── payments.py     vérification des webhooks de paiement
+├── payments.py     vérification des webhooks, traduction des évènements Stripe
+├── stripe_gateway.py  création des sessions de paiement
 ├── schemas.py      validation des entrées (Pydantic)
 ├── repository.py   requêtes SQL
 ├── db.py           schéma SQLite et connexions
@@ -196,7 +201,7 @@ motomatch/
 ├── seed.py         profils de démonstration
 ├── static/         interface web (HTML/CSS/JS sans dépendance)
 ├── tools/          génération des icônes
-└── tests/          177 tests (algorithme, API, sécurité, croisements, balades, PWA)
+└── tests/          191 tests (algorithme, API, sécurité, croisements, balades, PWA)
 ```
 
 ## Tests

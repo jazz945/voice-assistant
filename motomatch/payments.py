@@ -39,6 +39,76 @@ SUBSCRIPTION_RENEWED = "subscription.renewed"
 SUBSCRIPTION_CANCELLED = "subscription.cancelled"
 HANDLED_EVENTS = (SUBSCRIPTION_ACTIVATED, SUBSCRIPTION_RENEWED, SUBSCRIPTION_CANCELLED)
 
+# Correspondance entre les types d'évènements réels de Stripe et les trois
+# actions ci-dessus. Ce qui n'y figure pas est journalisé puis ignoré : Stripe
+# émet des dizaines de types, et réagir à un évènement mal compris est pire que
+# de le laisser passer.
+STRIPE_EVENT_MAP = {
+    "checkout.session.completed": SUBSCRIPTION_ACTIVATED,
+    "customer.subscription.created": SUBSCRIPTION_ACTIVATED,
+    "customer.subscription.updated": SUBSCRIPTION_RENEWED,
+    "invoice.paid": SUBSCRIPTION_RENEWED,
+    "customer.subscription.deleted": SUBSCRIPTION_CANCELLED,
+}
+
+
+@dataclass(frozen=True)
+class SubscriptionEvent:
+    """Ce qu'on retient d'un évènement, une fois traduit."""
+
+    action: str
+    user_id: int | None
+    customer_id: str | None
+    subscription_id: str | None
+    expires_at: str | None
+
+
+def _iso_from_epoch(value: object) -> str | None:
+    """Stripe date en secondes epoch ; la base stocke de l'ISO 8601 UTC."""
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+
+
+def parse_stripe_event(event: dict) -> SubscriptionEvent | None:
+    """Traduit un évènement Stripe, ou None s'il ne nous concerne pas.
+
+    L'identifiant de compte est cherché à trois endroits, du plus fiable au
+    moins : `client_reference_id` (posé à la création de la session), les
+    métadonnées de l'abonnement (reprises sur les renouvellements), puis
+    l'identifiant client Stripe — ce dernier ne donne pas l'utilisateur
+    directement et laisse l'appelant faire la correspondance en base.
+    """
+    action = STRIPE_EVENT_MAP.get(str(event.get("type", "")))
+    if action is None:
+        return None
+
+    obj = (event.get("data") or {}).get("object") or {}
+    metadata = obj.get("metadata") or {}
+
+    raw_user = obj.get("client_reference_id") or metadata.get("user_id")
+    try:
+        user_id = int(raw_user) if raw_user is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+
+    subscription = obj.get("subscription")
+    if isinstance(subscription, dict):
+        subscription = subscription.get("id")
+
+    # `checkout.session` n'a pas d'échéance ; elle arrive sur l'abonnement.
+    expires_at = _iso_from_epoch(obj.get("current_period_end"))
+
+    return SubscriptionEvent(
+        action=action,
+        user_id=user_id,
+        customer_id=obj.get("customer") if isinstance(obj.get("customer"), str) else None,
+        subscription_id=subscription if isinstance(subscription, str) else str(obj.get("id", "")),
+        expires_at=expires_at,
+    )
+
 
 class SignatureError(Exception):
     """Signature absente, mal formée, périmée ou fausse."""

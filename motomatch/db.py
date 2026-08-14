@@ -203,6 +203,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     expires_at   TEXT,
     provider     TEXT    NOT NULL DEFAULT 'manuel',
     external_id  TEXT,
+    -- Identifiant client chez le prestataire. Les évènements de renouvellement
+    -- ne portent pas notre identifiant utilisateur : c'est par celui-ci qu'on
+    -- retrouve le compte.
+    customer_id  TEXT,
     cancelled_at TEXT
 );
 

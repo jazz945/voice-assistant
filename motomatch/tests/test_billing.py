@@ -379,9 +379,13 @@ def test_a_valid_webhook_activates_the_subscription(client, rider, monkeypatch):
     account = rider("vraipaiement")
     body = {
         "id": "evt_2",
-        "type": payments.SUBSCRIPTION_ACTIVATED,
-        "user_id": account["user_id"],
-        "expires_at": "2099-01-01T00:00:00+00:00",
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "client_reference_id": str(account["user_id"]),
+            "customer": "cus_2",
+            "subscription": "sub_2",
+            "current_period_end": 4102444800,
+        }},
     }
     assert webhook(client, body, secret).json()["handled"] is True
     assert client.get("/api/subscription", headers=account["headers"]).json()["tier"] == "plus"
@@ -398,9 +402,13 @@ def test_a_replayed_webhook_does_not_extend_twice(client, rider, monkeypatch):
     account = rider("rejeu")
     body = {
         "id": "evt_3",
-        "type": payments.SUBSCRIPTION_ACTIVATED,
-        "user_id": account["user_id"],
-        "expires_at": "2099-01-01T00:00:00+00:00",
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "client_reference_id": str(account["user_id"]),
+            "customer": "cus_3",
+            "subscription": "sub_3",
+            "current_period_end": 4102444800,
+        }},
     }
     assert webhook(client, body, secret).json()["handled"] is True
     second = webhook(client, body, secret).json()
@@ -417,7 +425,11 @@ def test_an_old_signature_cannot_be_replayed(client, rider, monkeypatch):
 
     reload_settings()
     account = rider("vieux")
-    body = {"id": "evt_4", "type": payments.SUBSCRIPTION_ACTIVATED, "user_id": account["user_id"]}
+    body = {
+        "id": "evt_4",
+        "type": "checkout.session.completed",
+        "data": {"object": {"client_reference_id": str(account["user_id"])}},
+    }
     vieux = int(time.time()) - 4000
     assert webhook(client, body, secret, timestamp=vieux).status_code == 400
     assert client.get("/api/subscription", headers=account["headers"]).json()["tier"] == "gratuit"
@@ -447,7 +459,11 @@ def test_a_webhook_for_an_unknown_account_is_refused(client, monkeypatch):
     from motomatch.config import reload_settings
 
     reload_settings()
-    body = {"id": "evt_5", "type": payments.SUBSCRIPTION_ACTIVATED, "user_id": 99999}
+    body = {
+        "id": "evt_5",
+        "type": "checkout.session.completed",
+        "data": {"object": {"client_reference_id": "99999", "customer": "cus_inconnu"}},
+    }
     assert webhook(client, body, secret).status_code == 404
     reload_settings()
 
@@ -466,3 +482,254 @@ def test_offers_are_public_and_priced_by_the_server(client):
     offers = client.get("/api/subscription/offers").json()["offers"]
     assert {o["code"] for o in offers} == {"plus_1m", "plus_6m"}
     assert all(o["price"] > 0 for o in offers)
+
+
+# --- Stripe : traduction des évènements réels -------------------------------
+
+
+def stripe_event(kind: str, obj: dict, event_id: str = "evt_stripe") -> dict:
+    return {"id": event_id, "type": kind, "data": {"object": obj}}
+
+
+def test_a_completed_checkout_names_the_account_via_client_reference():
+    parsed = payments.parse_stripe_event(
+        stripe_event(
+            "checkout.session.completed",
+            {"client_reference_id": "42", "customer": "cus_1", "subscription": "sub_1"},
+        )
+    )
+    assert parsed.action == payments.SUBSCRIPTION_ACTIVATED
+    assert parsed.user_id == 42
+    assert parsed.customer_id == "cus_1"
+    assert parsed.subscription_id == "sub_1"
+
+
+def test_a_renewal_names_the_account_via_subscription_metadata():
+    """Les évènements de renouvellement n'ont pas de `client_reference_id` : le
+    compte est retrouvé par les métadonnées posées à la création."""
+    parsed = payments.parse_stripe_event(
+        stripe_event(
+            "customer.subscription.updated",
+            {
+                "id": "sub_2",
+                "customer": "cus_2",
+                "metadata": {"user_id": "7"},
+                "current_period_end": 4102444800,  # 2100-01-01
+            },
+        )
+    )
+    assert parsed.action == payments.SUBSCRIPTION_RENEWED
+    assert parsed.user_id == 7
+    assert parsed.expires_at.startswith("2100-01-01")
+
+
+def test_unknown_stripe_events_are_ignored():
+    """Stripe émet des dizaines de types ; réagir à un évènement mal compris
+    est pire que de le laisser passer."""
+    assert payments.parse_stripe_event(stripe_event("charge.refunded", {})) is None
+    assert payments.parse_stripe_event(stripe_event("ping", {})) is None
+
+
+@pytest.mark.parametrize("bad", [None, "", "pas-un-entier", {}])
+def test_an_unparseable_account_id_yields_none(bad):
+    parsed = payments.parse_stripe_event(
+        stripe_event("checkout.session.completed", {"client_reference_id": bad})
+    )
+    assert parsed.user_id is None
+
+
+def stripe_webhook(client, event: dict, secret: str):
+    payload = json.dumps(event).encode()
+    return client.post(
+        "/api/subscription/webhook",
+        content=payload,
+        headers={
+            "x-signature": payments.sign_payload(payload, secret),
+            "content-type": "application/json",
+        },
+    )
+
+
+def test_a_real_stripe_checkout_event_activates_the_subscription(client, rider, monkeypatch):
+    secret = "secret-de-test-suffisamment-long"
+    monkeypatch.setenv("MOTOMATCH_PAYMENT_WEBHOOK_SECRET", secret)
+    from motomatch.config import reload_settings
+
+    reload_settings()
+    account = rider("stripe1")
+    response = stripe_webhook(
+        client,
+        stripe_event(
+            "checkout.session.completed",
+            {
+                "client_reference_id": str(account["user_id"]),
+                "customer": "cus_stripe1",
+                "subscription": "sub_stripe1",
+                "current_period_end": 4102444800,
+            },
+            event_id="evt_ck_1",
+        ),
+        secret,
+    )
+    assert response.json()["handled"] is True
+    assert client.get("/api/subscription", headers=account["headers"]).json()["tier"] == "plus"
+    reload_settings()
+
+
+def test_a_renewal_without_our_id_is_matched_by_stripe_customer(client, rider, monkeypatch):
+    """Le cas qui casse en production si on l'oublie : au renouvellement, Stripe
+    ne renvoie pas forcément nos métadonnées, et seul l'identifiant client
+    permet de retrouver le compte."""
+    secret = "secret-de-test-suffisamment-long"
+    monkeypatch.setenv("MOTOMATCH_PAYMENT_WEBHOOK_SECRET", secret)
+    from motomatch.config import reload_settings
+
+    reload_settings()
+    account = rider("stripe2")
+    stripe_webhook(
+        client,
+        stripe_event(
+            "checkout.session.completed",
+            {
+                "client_reference_id": str(account["user_id"]),
+                "customer": "cus_stripe2",
+                "subscription": "sub_stripe2",
+            },
+            event_id="evt_ck_2",
+        ),
+        secret,
+    )
+
+    # Renouvellement : ni client_reference_id, ni métadonnées.
+    renewal = stripe_webhook(
+        client,
+        stripe_event(
+            "invoice.paid",
+            {"id": "in_1", "customer": "cus_stripe2", "current_period_end": 4102444800},
+            event_id="evt_inv_1",
+        ),
+        secret,
+    )
+    assert renewal.json()["handled"] is True
+    body = client.get("/api/subscription", headers=account["headers"]).json()
+    assert body["tier"] == "plus"
+    assert body["expires_at"].startswith("2100-01-01")
+    reload_settings()
+
+
+def test_a_stripe_cancellation_ends_the_subscription(client, rider, monkeypatch):
+    secret = "secret-de-test-suffisamment-long"
+    monkeypatch.setenv("MOTOMATCH_PAYMENT_WEBHOOK_SECRET", secret)
+    from motomatch.config import reload_settings
+
+    reload_settings()
+    account = rider("stripe3")
+    stripe_webhook(
+        client,
+        stripe_event(
+            "checkout.session.completed",
+            {"client_reference_id": str(account["user_id"]), "customer": "cus_stripe3",
+             "subscription": "sub_stripe3", "current_period_end": 4102444800},
+            event_id="evt_ck_3",
+        ),
+        secret,
+    )
+    cancelled = stripe_webhook(
+        client,
+        stripe_event(
+            "customer.subscription.deleted",
+            {"id": "sub_stripe3", "customer": "cus_stripe3"},
+            event_id="evt_del_3",
+        ),
+        secret,
+    )
+    assert cancelled.json()["action"] == payments.SUBSCRIPTION_CANCELLED
+    assert client.get("/api/subscription", headers=account["headers"]).json()["cancelled_at"]
+    reload_settings()
+
+
+# --- Stripe : création de session -------------------------------------------
+
+
+def test_checkout_stays_a_stub_when_stripe_is_not_configured(client, rider):
+    account = rider("nonconfig")
+    body = client.post(
+        "/api/subscription/checkout", json={"offer_code": "plus_1m"}, headers=account["headers"]
+    ).json()
+    assert body["status"] == "prestataire_non_configure"
+    assert "checkout_url" not in body
+
+
+def test_checkout_returns_a_redirect_when_stripe_answers(client, rider, monkeypatch):
+    """Faux serveur Stripe : aucun appel réseau, aucune vraie clé."""
+    from motomatch import main as main_module
+    from motomatch.config import reload_settings
+    from motomatch.stripe_gateway import CheckoutSession
+
+    monkeypatch.setenv("MOTOMATCH_STRIPE_SECRET_KEY", "sk_test_faux")
+    monkeypatch.setenv("MOTOMATCH_STRIPE_PRICE_MONTHLY", "price_faux_1m")
+    monkeypatch.setenv("MOTOMATCH_STRIPE_PRICE_BIANNUAL", "price_faux_6m")
+    monkeypatch.setenv("MOTOMATCH_PAYMENT_WEBHOOK_SECRET", "secret-de-test-suffisamment-long")
+    reload_settings()
+
+    vus: dict = {}
+
+    class FauxGateway:
+        def __init__(self, secret_key, *args, **kwargs):
+            vus["cle"] = secret_key
+
+        def create_checkout_session(self, **kwargs):
+            vus.update(kwargs)
+            return CheckoutSession(id="cs_1", url="https://checkout.stripe.test/cs_1")
+
+    monkeypatch.setattr(main_module, "StripeGateway", FauxGateway)
+
+    account = rider("configure")
+    body = client.post(
+        "/api/subscription/checkout", json={"offer_code": "plus_6m"}, headers=account["headers"]
+    ).json()
+
+    assert body["status"] == "redirection"
+    assert body["checkout_url"] == "https://checkout.stripe.test/cs_1"
+    # Le tarif vient du serveur, jamais du client.
+    assert vus["price_id"] == "price_faux_6m"
+    assert vus["user_id"] == account["user_id"]
+    assert vus["idempotency_key"]
+    reload_settings()
+
+
+def test_a_stripe_failure_does_not_leak_details_to_the_caller(client, rider, monkeypatch):
+    from motomatch import main as main_module
+    from motomatch.config import reload_settings
+    from motomatch.stripe_gateway import StripeError
+
+    monkeypatch.setenv("MOTOMATCH_STRIPE_SECRET_KEY", "sk_test_faux")
+    monkeypatch.setenv("MOTOMATCH_STRIPE_PRICE_MONTHLY", "price_faux_1m")
+    monkeypatch.setenv("MOTOMATCH_STRIPE_PRICE_BIANNUAL", "price_faux_6m")
+    monkeypatch.setenv("MOTOMATCH_PAYMENT_WEBHOOK_SECRET", "secret-de-test-suffisamment-long")
+    reload_settings()
+
+    class GatewayEnPanne:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def create_checkout_session(self, **kwargs):
+            raise StripeError("clé sk_test_secrete refusée")
+
+    monkeypatch.setattr(main_module, "StripeGateway", GatewayEnPanne)
+
+    account = rider("panne")
+    response = client.post(
+        "/api/subscription/checkout", json={"offer_code": "plus_1m"}, headers=account["headers"]
+    )
+    assert response.status_code == 502
+    # Rien du message interne — a fortiori aucune clé — ne ressort.
+    assert "sk_test" not in response.text
+    reload_settings()
+
+
+def test_the_gateway_refuses_to_start_without_a_key():
+    from motomatch.stripe_gateway import StripeError, StripeGateway
+
+    with pytest.raises(StripeError):
+        StripeGateway("")
