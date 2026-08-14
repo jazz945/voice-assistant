@@ -1,0 +1,39 @@
+# MotoMatch sans Docker. Suppose :
+#   /opt/motomatch          le dépôt
+#   /opt/motomatch/.venv    l'environnement virtuel
+#   /opt/motomatch/.env     la configuration (0600, propriété de motomatch)
+#   utilisateur système « motomatch »
+[Unit]
+Description=MotoMatch — application de rencontre pour motards
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=motomatch
+Group=motomatch
+WorkingDirectory=/opt/motomatch
+EnvironmentFile=/opt/motomatch/.env
+Environment=MOTOMATCH_DB=/var/lib/motomatch/motomatch.db
+# Écoute en local seul : le reverse proxy est le seul point d'entrée.
+ExecStart=/opt/motomatch/.venv/bin/uvicorn motomatch.main:app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1 \
+    --workers 1 --no-server-header
+Restart=on-failure
+RestartSec=5s
+
+# Cloisonnement : le service ne peut écrire que son répertoire de données.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+StateDirectory=motomatch
+ReadWritePaths=/var/lib/motomatch
+
+[Install]
+WantedBy=multi-user.target

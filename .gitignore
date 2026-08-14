@@ -169,3 +169,7 @@ android/app/build/
 android/local.properties
 *.apk
 *.aab
+
+# Déploiement
+deploy/.env
+deploy/sauvegardes/*.db

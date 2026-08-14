@@ -1,0 +1,20 @@
+# Nom de domaine réel, joignable depuis Internet sur les ports 80 et 443.
+# Caddy obtient et renouvelle seul un certificat Let's Encrypt.
+#
+# MOTOMATCH_SITE_ADDRESS = motomatch.mondomaine.fr
+
+{$MOTOMATCH_SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Les en-têtes de sécurité viennent de l'application (middleware.py) ;
+	# on n'en ajoute qu'un ici, car il ne concerne que le transport TLS.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	reverse_proxy app:8000 {
+		health_uri /api/health
+		health_interval 30s
+	}
+}

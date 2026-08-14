@@ -10,10 +10,13 @@ une posture de sécurité pensée pour une application de rencontre : Argon2id,
 sessions révocables, protection contre la trilatération géographique, blocage,
 signalement et suppression de compte. Détail complet dans **[SECURITY.md](SECURITY.md)**.
 
+Pour l'héberger chez soi — Docker, HTTPS automatique, sauvegardes, démarrage
+au boot : **[../deploy/README.md](../deploy/README.md)**.
+
 L'interface est **installable sur Android et iOS** (PWA : manifeste, service
-worker, icônes) — voir la marche à suivre dans
-**[DEPLOIEMENT_STORES.md](DEPLOIEMENT_STORES.md)**, qui décrit aussi le chemin
-vers l'App Store et Google Play.
+worker, icônes) et une application Android existe dans
+**[../android/](../android/README.md)** ; le chemin vers l'App Store et Google
+Play est décrit dans **[DEPLOIEMENT_STORES.md](DEPLOIEMENT_STORES.md)**.
 
 ## Démarrage rapide
 

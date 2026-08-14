@@ -37,6 +37,13 @@ clair.**
 
 Le jeton d'accès peut rester en mémoire vive : il se regagne par rotation.
 
+## Faire tourner le serveur
+
+L'APK comme la PWA ont besoin d'un serveur qui tourne, et l'installation PWA
+exige du HTTPS. Le kit d'auto-hébergement — Docker, Caddy avec certificat
+automatique, sauvegardes, redémarrage au boot — est dans
+**[`../deploy/README.md`](../deploy/README.md)**.
+
 ## Installer sur Android dès maintenant (PWA)
 
 Avant tout client natif, l'interface web est **installable telle quelle** sur
