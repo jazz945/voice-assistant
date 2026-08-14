@@ -27,6 +27,7 @@
       <button class="nav-btn" data-view="crossings">Croisés</button>
       <button class="nav-btn" data-view="rides">Balades</button>
       <button class="nav-btn" data-view="matches">Matchs</button>
+      <button class="nav-btn" data-view="plus">Plus</button>
       <button class="nav-btn" data-view="profile">Mon profil</button>
       <button class="nav-btn" data-view="security">Sécurité</button>
       <button class="nav-btn ghost" id="logout-btn">Déconnexion</button>
@@ -211,6 +212,25 @@
       <div class="card">
         <h2>Balades à venir</h2>
         <div id="rides-list" class="deck"></div>
+      </div>
+    </section>
+
+    <!-- Abonnement -->
+    <section id="view-plus" class="view hidden">
+      <div class="card" id="plus-status"></div>
+
+      <div class="card">
+        <h2>Qui t'a liké</h2>
+        <div id="likes-recus" class="deck"></div>
+      </div>
+
+      <div class="card">
+        <h2>MotoMatch Plus</h2>
+        <div id="offres" class="deck"></div>
+        <p class="muted small">
+          Paiement non branché sur cette installation. Sur iOS et Android, la
+          facturation d'Apple et de Google est obligatoire (15 à 30 % de commission).
+        </p>
       </div>
     </section>
 

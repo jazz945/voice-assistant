@@ -226,7 +226,9 @@ def test_mutual_like_creates_a_match(client, register, rider_profile):
         json={"target_user_id": bob["user_id"], "direction": "like"},
         headers=alice["headers"],
     ).json()
-    assert first == {"matched": False, "match_id": None}
+    # La réponse porte aussi le quota de likes depuis l'abonnement : on vérifie
+    # le résultat du swipe, pas la forme exacte de l'enveloppe.
+    assert first["matched"] is False and first["match_id"] is None
 
     second = client.post(
         "/api/swipes",

@@ -625,3 +625,163 @@ def export_user_data(conn: sqlite3.Connection, user_id: int) -> dict[str, Any]:
 
 def rows_to_dicts(rows: Iterable[sqlite3.Row]) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
+
+
+# --- Abonnement et boosts ---------------------------------------------------
+
+
+def get_subscription(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM subscriptions WHERE user_id = ?", (user_id,)).fetchone()
+
+
+def upsert_subscription(
+    conn: sqlite3.Connection,
+    user_id: int,
+    tier: str,
+    expires_at: str | None,
+    provider: str,
+    external_id: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO subscriptions (user_id, tier, expires_at, provider, external_id, cancelled_at)
+        VALUES (?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(user_id) DO UPDATE SET
+            tier = excluded.tier,
+            expires_at = excluded.expires_at,
+            provider = excluded.provider,
+            external_id = excluded.external_id,
+            cancelled_at = NULL
+        """,
+        (user_id, tier, expires_at, provider, external_id),
+    )
+
+
+def cancel_subscription(conn: sqlite3.Connection, user_id: int) -> bool:
+    """Marque l'abonnement comme résilié.
+
+    L'accès est conservé jusqu'à l'échéance déjà payée : couper immédiatement
+    reviendrait à garder l'argent d'une période non servie.
+    """
+    cursor = conn.execute(
+        "UPDATE subscriptions SET cancelled_at = datetime('now') "
+        "WHERE user_id = ? AND cancelled_at IS NULL",
+        (user_id,),
+    )
+    return cursor.rowcount > 0
+
+
+def count_likes_today(conn: sqlite3.Connection, user_id: int) -> int:
+    """Likes émis depuis minuit UTC.
+
+    Le quota se remet à zéro sur une journée calendaire et non sur une fenêtre
+    glissante : « ça repart à minuit » est compréhensible, « dans 7 h 12 » ne
+    l'est pas. Les `pass` ne sont pas comptés — seuls les likes sont rationnés.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM swipes "
+        "WHERE from_user_id = ? AND direction = 'like' AND created_at >= date('now')",
+        (user_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def count_boosts_this_month(conn: sqlite3.Connection, user_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM boosts "
+        "WHERE user_id = ? AND started_at >= date('now', 'start of month')",
+        (user_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def start_boost(conn: sqlite3.Connection, user_id: int, minutes: int) -> str:
+    row = conn.execute(
+        "INSERT INTO boosts (user_id, expires_at) "
+        "VALUES (?, datetime('now', ?)) RETURNING expires_at",
+        (user_id, f"+{minutes} minutes"),
+    ).fetchone()
+    return str(row["expires_at"])
+
+
+def active_boost(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM boosts WHERE user_id = ? AND expires_at > datetime('now') "
+        "ORDER BY expires_at DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+
+
+def boosted_user_ids(conn: sqlite3.Connection) -> set[int]:
+    """Comptes actuellement boostés — une requête plutôt qu'une par candidat."""
+    return {
+        int(row["user_id"])
+        for row in conn.execute(
+            "SELECT DISTINCT user_id FROM boosts WHERE expires_at > datetime('now')"
+        ).fetchall()
+    }
+
+
+def list_received_likes(conn: sqlite3.Connection, user_id: int, limit: int) -> list[sqlite3.Row]:
+    """Profils ayant liké cet utilisateur sans réponse de sa part.
+
+    Ceux qu'il a déjà évalués sont exclus : ils sont soit devenus des matchs,
+    soit délibérément passés.
+    """
+    return conn.execute(
+        f"""
+        SELECT s.created_at AS liked_at, {PROFILE_COLUMNS}
+        FROM swipes s
+        JOIN profiles p ON p.user_id = s.from_user_id
+        JOIN users u ON u.id = s.from_user_id AND u.deleted_at IS NULL
+        WHERE s.to_user_id = :uid
+          AND s.direction = 'like'
+          AND NOT EXISTS (
+              SELECT 1 FROM swipes mine
+              WHERE mine.from_user_id = :uid AND mine.to_user_id = s.from_user_id
+          )
+          AND {_NOT_BLOCKED}
+        ORDER BY s.created_at DESC
+        LIMIT :limit
+        """,
+        {"uid": user_id, "limit": limit},
+    ).fetchall()
+
+
+def last_swipe(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM swipes WHERE from_user_id = ? ORDER BY id DESC LIMIT 1", (user_id,)
+    ).fetchone()
+
+
+def delete_swipe(conn: sqlite3.Connection, swipe_id: int, user_id: int) -> bool:
+    cursor = conn.execute(
+        "DELETE FROM swipes WHERE id = ? AND from_user_id = ?", (swipe_id, user_id)
+    )
+    return cursor.rowcount > 0
+
+
+def record_payment_event(
+    conn: sqlite3.Connection, provider: str, event_id: str, kind: str, user_id: int | None
+) -> bool:
+    """Journalise un évènement de paiement. False s'il avait déjà été traité.
+
+    C'est la garantie d'idempotence : les prestataires rejouent leurs webhooks
+    dès qu'ils doutent d'une réception, et sans ce verrou un rejeu prolongerait
+    l'abonnement une seconde fois.
+    """
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO payment_events (provider, event_id, kind, user_id) "
+        "VALUES (?, ?, ?, ?)",
+        (provider, event_id, kind, user_id),
+    )
+    return cursor.rowcount > 0
+
+
+def get_match_for_user_pair(
+    conn: sqlite3.Connection, user_id: int, other_id: int
+) -> sqlite3.Row | None:
+    a, b = sorted((user_id, other_id))
+    return conn.execute(
+        "SELECT * FROM matches WHERE user_a_id = ? AND user_b_id = ?", (a, b)
+    ).fetchone()

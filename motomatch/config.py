@@ -49,6 +49,25 @@ class Settings(BaseSettings):
     rate_limit_report: tuple[int, int] = (20, 86400)
     rate_limit_ping: tuple[int, int] = (240, 3600)
     rate_limit_ride: tuple[int, int] = (20, 86400)
+    rate_limit_boost: tuple[int, int] = (10, 86400)
+    rate_limit_checkout: tuple[int, int] = (20, 3600)
+
+    # --- Abonnement MotoMatch Plus ---
+    # Quota quotidien de likes en gratuit. C'est le levier de conversion du
+    # modèle : le baisser convertit davantage et dégrade davantage.
+    free_daily_likes: int = Field(default=20, ge=1, le=1000)
+    plus_monthly_boosts: int = Field(default=3, ge=0, le=100)
+    boost_duration_minutes: int = Field(default=30, ge=5, le=1440)
+    # Points ajoutés au score d'un profil boosté. Borné : au-delà, l'argent
+    # écraserait complètement la compatibilité.
+    boost_score_bonus: float = Field(default=15.0, ge=0, le=50)
+    # Affichage uniquement — le prix qui fait foi est celui du prestataire.
+    price_monthly_cents: int = Field(default=999, ge=0)
+    price_biannual_cents: int = Field(default=3999, ge=0)
+    # Secret de vérification des webhooks de paiement. Sans lui, n'importe qui
+    # s'offrirait un abonnement en appelant l'URL.
+    payment_webhook_secret: str = ""
+    payment_webhook_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
 
     # --- Confidentialité géographique ---
     # Les coordonnées d'autrui ne sortent jamais de l'API ; les distances sont

@@ -31,6 +31,10 @@ USER_UNBLOCKED = "safety.unblocked"
 USER_REPORTED = "safety.reported"
 CROSSINGS_TOGGLED = "crossings.toggled"
 CROSSINGS_PURGED = "crossings.purged"
+CHECKOUT_STARTED = "billing.checkout_started"
+SUBSCRIPTION_UPDATED = "billing.subscription_updated"
+SUBSCRIPTION_CANCELLED = "billing.subscription_cancelled"
+PAYMENT_REJECTED = "billing.payment_rejected"
 RATE_LIMITED = "security.rate_limited"
 
 

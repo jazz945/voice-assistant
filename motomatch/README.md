@@ -67,6 +67,30 @@ d'environnement `MOTOMATCH_DB`.
   réservée à ses matchs, ou sur validation de l'organisateur. Le point de
   rendez-vous exact n'est révélé qu'aux participants acceptés.
 
+## Abonnement MotoMatch Plus
+
+Le modèle retenu est celui de Tinder : brider la version gratuite, vendre la
+levée du bridage. Il convertit bien et il a un coût, écrit noir sur blanc en
+tête de `billing.py`.
+
+| | Gratuit | Plus |
+|---|---|---|
+| Likes par jour | 20 | illimités |
+| Voir qui t'a liké | non | oui |
+| Boosts | — | 3 par mois |
+| Annuler son dernier swipe | non | oui |
+| Filtres avancés | non | oui |
+
+Trois endroits font mal, et ils sont commentés là où ils agissent :
+
+1. **Le quota de likes** dégrade volontairement l'usage gratuit ; la frustration
+   est le moteur de la conversion, pas un effet de bord.
+2. **Masquer qui t'a liké** retient une information déjà acquise. On vend un rideau.
+3. **Le boost fausse le classement par compatibilité** — la seule chose qui
+   distingue MotoMatch. Le bonus est borné, et l'API renvoie `boosted: true` avec
+   le score non biaisé à côté (`compatibility_score`), pour qu'un profil remonté
+   par l'argent ne passe jamais pour un profil réellement compatible.
+
 ## Score de compatibilité
 
 Le calcul vit dans `matching.py`. Six composantes, chacune normalisée entre 0 et
@@ -114,6 +138,13 @@ faire évoluer le classement.
 | `GET` | `/api/blocks` | Liste des personnes bloquées. |
 | `DELETE` | `/api/blocks/{user_id}` | Débloque un utilisateur. |
 | `POST` | `/api/reports` | Signale un utilisateur (et le bloque). |
+| `GET` | `/api/subscription` | Palier, droits et quota du jour. |
+| `GET` | `/api/subscription/offers` | Offres et tarifs. |
+| `POST` | `/api/subscription/checkout` | Ouvre un paiement — n'accorde aucun droit. |
+| `DELETE` | `/api/subscription` | Résilie, accès conservé jusqu'à l'échéance payée. |
+| `GET` | `/api/likes/received` | Qui t'a liké — nombre seul en gratuit. |
+| `POST` | `/api/boost` | Remonte le profil, réservé aux abonnés. |
+| `DELETE` | `/api/swipes/last` | Annule le dernier swipe, réservé aux abonnés. |
 | `PUT` | `/api/me/crossings` | Active ou coupe les croisements (coupure = effacement). |
 | `POST` | `/api/crossings/ping` | Signale une position (réduite à une cellule). |
 | `GET` | `/api/crossings` | Motards croisés, avec contexte et sens. |
@@ -151,6 +182,8 @@ motomatch/
 ├── matching.py     score de compatibilité et distance géographique
 ├── privacy.py      grille géographique, anti-trilatération
 ├── crossings.py    détection et classification des croisements
+├── billing.py      paliers, quotas, boosts
+├── payments.py     vérification des webhooks de paiement
 ├── schemas.py      validation des entrées (Pydantic)
 ├── repository.py   requêtes SQL
 ├── db.py           schéma SQLite et connexions
@@ -163,7 +196,7 @@ motomatch/
 ├── seed.py         profils de démonstration
 ├── static/         interface web (HTML/CSS/JS sans dépendance)
 ├── tools/          génération des icônes
-└── tests/          149 tests (algorithme, API, sécurité, croisements, balades, PWA)
+└── tests/          177 tests (algorithme, API, sécurité, croisements, balades, PWA)
 ```
 
 ## Tests

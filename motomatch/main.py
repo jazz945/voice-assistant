@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import audit, crossings
+from . import audit, billing, crossings, payments
 from . import repository as repo
 from .config import Settings, get_settings
 from .db import get_connection, init_db
@@ -44,6 +44,8 @@ from .middleware import RequestSizeLimitMiddleware, SecurityHeadersMiddleware
 from .privacy import bucket_distance, public_profile, snap_to_grid
 from .schemas import (
     REPORT_REASONS,
+    BoostInput,
+    CheckoutInput,
     RIDE_ROUTE_TYPES,
     RIDE_VISIBILITIES,
     AccountDeletionInput,
@@ -187,6 +189,26 @@ def require_profile(
             "complétez votre profil moto avant d'utiliser cette fonctionnalité",
         )
     return profile
+
+
+def current_entitlements(
+    conn: sqlite3.Connection, user_id: int, cfg: Settings
+) -> billing.Entitlements:
+    """Droits effectifs, relus à chaque requête plutôt que mis en cache.
+
+    Un abonnement expire à la seconde près ; le mettre en cache ouvrirait une
+    fenêtre où un compte échu garde ses droits, ou l'inverse.
+    """
+    tier = billing.active_tier(repo.get_subscription(conn, user_id))
+    return billing.entitlements_for(tier, cfg)
+
+
+def like_quota(
+    conn: sqlite3.Connection, user_id: int, rights: billing.Entitlements
+) -> billing.LikeQuota:
+    used = 0 if rights.unlimited_likes else repo.count_likes_today(conn, user_id)
+    reset = conn.execute("SELECT datetime('now', 'start of day', '+1 day') AS t").fetchone()["t"]
+    return billing.LikeQuota(limit=rights.daily_likes, used=used, resets_at=reset)
 
 
 def enforce_rate_limit(
@@ -595,6 +617,7 @@ def discover(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "min_age ne peut pas dépasser max_age")
 
     today = date.today()
+    boosted_ids = repo.boosted_user_ids(conn)
     results: list[dict[str, Any]] = []
     for candidate in repo.list_candidate_profiles(conn, int(viewer["user_id"])):
         snapped_lat, snapped_lon = snap_to_grid(
@@ -623,6 +646,15 @@ def discover(
 
         score = compatibility(viewer, candidate, distance_km=distance)
         score["distance_km"] = bucket_distance(distance, cfg.distance_bucket_km)
+
+        # Le boost fausse sciemment le classement par compatibilité — la seule
+        # chose qui distingue MotoMatch. On l'affiche donc (`boosted`) et on
+        # conserve le score non biaisé à côté, pour qu'un profil remonté par
+        # l'argent ne puisse jamais passer pour un profil réellement compatible.
+        boosted = int(candidate["user_id"]) in boosted_ids
+        score["boosted"] = boosted
+        score["compatibility_score"] = score["score"]
+        score["score"] = round(score["score"] + billing.boost_bonus(cfg, boosted), 1)
         results.append({"profile": other_profile_payload(candidate), **score})
 
     results.sort(key=lambda item: item["score"], reverse=True)
@@ -655,13 +687,29 @@ def swipe(
         # pas pouvoir déduire qu'elle l'a été.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "profil introuvable")
 
+    # Quota de likes : le bridage volontaire de la version gratuite. Les `pass`
+    # ne sont pas comptés — rationner le refus n'aurait aucun sens.
+    rights = current_entitlements(conn, viewer_id, cfg)
+    quota = like_quota(conn, viewer_id, rights)
+    if payload.direction == "like" and quota.exhausted:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            {
+                "message": "quota de likes atteint pour aujourd'hui",
+                "quota": quota.payload(),
+                "upgrade": "/api/subscription/offers",
+            },
+        )
+
     repo.record_swipe(conn, viewer_id, payload.target_user_id, payload.direction)
+    if payload.direction == "like":
+        quota.used += 1
 
     matched = payload.direction == "like" and repo.has_liked(
         conn, payload.target_user_id, viewer_id
     )
     match_id = repo.create_match(conn, viewer_id, payload.target_user_id) if matched else None
-    return {"matched": matched, "match_id": match_id}
+    return {"matched": matched, "match_id": match_id, "quota": quota.payload()}
 
 
 # --- Matchs et messagerie ---------------------------------------------------
@@ -1169,6 +1217,255 @@ def cancel_ride(
     """Annule une balade — réservé à l'organisateur."""
     if not repo.cancel_ride(conn, ride_id, int(viewer["id"])):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "balade introuvable")
+
+
+# --- Abonnement MotoMatch Plus ----------------------------------------------
+
+
+@app.get("/api/subscription", tags=["abonnement"])
+def read_subscription(
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+    cfg: Annotated[Settings, Depends(config)],
+) -> dict[str, Any]:
+    """Palier actif, droits associés et quota du jour."""
+    user_id = int(user["id"])
+    subscription = repo.get_subscription(conn, user_id)
+    rights = current_entitlements(conn, user_id, cfg)
+    boost = repo.active_boost(conn, user_id)
+    return {
+        "tier": rights.tier,
+        "expires_at": subscription["expires_at"] if subscription else None,
+        "cancelled_at": subscription["cancelled_at"] if subscription else None,
+        "entitlements": {
+            "unlimited_likes": rights.unlimited_likes,
+            "sees_who_liked": rights.sees_who_liked,
+            "monthly_boosts": rights.monthly_boosts,
+            "can_rewind": rights.can_rewind,
+            "advanced_filters": rights.advanced_filters,
+        },
+        "likes": like_quota(conn, user_id, rights).payload(),
+        "boosts": {
+            "used_this_month": repo.count_boosts_this_month(conn, user_id),
+            "included": rights.monthly_boosts,
+            "active_until": boost["expires_at"] if boost else None,
+        },
+    }
+
+
+@app.get("/api/subscription/offers", tags=["abonnement"])
+def subscription_offers(cfg: Annotated[Settings, Depends(config)]) -> dict[str, Any]:
+    return {"offers": [offer.payload() for offer in billing.offers(cfg)]}
+
+
+@app.post("/api/subscription/checkout", tags=["abonnement"])
+def checkout(
+    payload: CheckoutInput,
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+    cfg: Annotated[Settings, Depends(config)],
+) -> dict[str, Any]:
+    """Ouvre un paiement pour l'offre choisie.
+
+    L'abonnement n'est **pas** activé ici : seul le webhook signé du prestataire
+    fait foi. Une activation déclenchée par le client serait gratuite pour qui
+    sait envoyer une requête.
+    """
+    user_id = int(user["id"])
+    enforce_rate_limit(
+        conn, "checkout", str(user_id), cfg.rate_limit_checkout,
+        user_id=user_id, ip=client_ip(request),
+    )
+    offer = next((o for o in billing.offers(cfg) if o.code == payload.offer_code), None)
+    if offer is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "offre inconnue")
+
+    audit.record(conn, audit.CHECKOUT_STARTED, user_id=user_id, ip=client_ip(request),
+                 detail=offer.code)
+    return {
+        "offer": offer.payload(),
+        "status": "prestataire_non_configure",
+        "detail": (
+            "Brancher ici la création de session du prestataire de paiement. "
+            "Sur iOS et Android, la facturation du store est obligatoire."
+        ),
+    }
+
+
+@app.delete("/api/subscription", tags=["abonnement"])
+def cancel(
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    user: Annotated[sqlite3.Row, Depends(current_user)],
+) -> dict[str, Any]:
+    """Résilie l'abonnement, sans couper l'accès déjà payé.
+
+    L'accès court jusqu'à l'échéance : garder l'argent d'une période non servie
+    serait indéfendable, et la loi française encadre le remboursement.
+    """
+    user_id = int(user["id"])
+    subscription = repo.get_subscription(conn, user_id)
+    if subscription is None or billing.active_tier(subscription) != billing.PLUS:
+        raise HTTPException(status.HTTP_409_CONFLICT, "aucun abonnement actif")
+    repo.cancel_subscription(conn, user_id)
+    audit.record(conn, audit.SUBSCRIPTION_CANCELLED, user_id=user_id, ip=client_ip(request))
+    return {"cancelled": True, "access_until": subscription["expires_at"]}
+
+
+@app.post("/api/subscription/webhook", include_in_schema=False)
+async def subscription_webhook(
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    cfg: Annotated[Settings, Depends(config)],
+) -> dict[str, Any]:
+    """Point d'entrée du prestataire de paiement.
+
+    Non authentifié au sens des jetons — le prestataire n'en a pas — mais la
+    signature HMAC tient lieu d'authentification, et un horodatage hors
+    tolérance est rejeté pour empêcher le rejeu.
+    """
+    body = await request.body()
+    signature = request.headers.get("x-signature", "")
+    try:
+        payments.verify_signature(
+            body, signature, cfg.payment_webhook_secret, cfg.payment_webhook_tolerance_seconds
+        )
+    except payments.SignatureError as error:
+        audit.record(conn, audit.PAYMENT_REJECTED, ip=client_ip(request), detail=str(error))
+        conn.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "signature invalide") from error
+
+    import json
+
+    try:
+        event = json.loads(body)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "corps illisible") from error
+
+    event_id = str(event.get("id", ""))
+    kind = str(event.get("type", ""))
+    user_id = event.get("user_id")
+    if not event_id or not kind:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "évènement incomplet")
+
+    # Idempotence : un prestataire rejoue ses webhooks au moindre doute.
+    if not repo.record_payment_event(conn, payments.STRIPE, event_id, kind, user_id):
+        return {"handled": False, "reason": "deja_traite"}
+
+    if kind not in payments.HANDLED_EVENTS:
+        return {"handled": False, "reason": "evenement_ignore"}
+    if not isinstance(user_id, int) or repo.get_user(conn, user_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "compte inconnu")
+
+    if kind == payments.SUBSCRIPTION_CANCELLED:
+        repo.cancel_subscription(conn, user_id)
+    else:
+        repo.upsert_subscription(
+            conn, user_id, billing.PLUS, event.get("expires_at"),
+            payments.STRIPE, event.get("subscription_id"),
+        )
+    audit.record(conn, audit.SUBSCRIPTION_UPDATED, user_id=user_id, detail=kind)
+    return {"handled": True, "type": kind}
+
+
+@app.get("/api/likes/received", tags=["abonnement"])
+def received_likes(
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+    cfg: Annotated[Settings, Depends(config)],
+    limit: int = Query(default=30, ge=1, le=100),
+) -> dict[str, Any]:
+    """Qui t'a liké.
+
+    En gratuit, seul le nombre est renvoyé. C'est le deuxième levier du modèle :
+    l'information existe déjà et a été méritée par l'utilisateur, on lui vend un
+    rideau devant. C'est efficace, et c'est ce que ça coûte.
+    """
+    viewer_id = int(viewer["user_id"])
+    rights = current_entitlements(conn, viewer_id, cfg)
+    rows = repo.list_received_likes(conn, viewer_id, limit)
+
+    if not rights.sees_who_liked:
+        return {
+            "count": len(rows),
+            "results": [],
+            "locked": True,
+            "message": "Passe à MotoMatch Plus pour voir qui t'a liké.",
+        }
+    return {
+        "count": len(rows),
+        "locked": False,
+        "results": [
+            {"liked_at": row["liked_at"], "profile": other_profile_payload(row)} for row in rows
+        ],
+    }
+
+
+@app.post("/api/boost", tags=["abonnement"])
+def start_boost(
+    _: BoostInput,
+    request: Request,
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+    cfg: Annotated[Settings, Depends(config)],
+) -> dict[str, Any]:
+    """Remonte le profil dans le classement des autres, pour une durée limitée."""
+    viewer_id = int(viewer["user_id"])
+    enforce_rate_limit(
+        conn, "boost", str(viewer_id), cfg.rate_limit_boost, user_id=viewer_id,
+        ip=client_ip(request),
+    )
+    rights = current_entitlements(conn, viewer_id, cfg)
+    if rights.monthly_boosts <= 0:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "les boosts demandent MotoMatch Plus")
+    if repo.active_boost(conn, viewer_id) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "un boost est déjà en cours")
+    used = repo.count_boosts_this_month(conn, viewer_id)
+    if used >= rights.monthly_boosts:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{rights.monthly_boosts} boosts déjà utilisés ce mois-ci",
+        )
+
+    expires = repo.start_boost(conn, viewer_id, cfg.boost_duration_minutes)
+    return {
+        "active_until": expires,
+        "remaining_this_month": rights.monthly_boosts - used - 1,
+        "score_bonus": cfg.boost_score_bonus,
+    }
+
+
+@app.delete("/api/swipes/last", tags=["abonnement"])
+def rewind(
+    conn: Annotated[sqlite3.Connection, Depends(db)],
+    viewer: Annotated[sqlite3.Row, Depends(require_profile)],
+    cfg: Annotated[Settings, Depends(config)],
+) -> dict[str, Any]:
+    """Annule le dernier swipe — réservé aux abonnés.
+
+    Un like déjà réciproque n'est pas annulable : le match existe et l'autre
+    personne l'a vu. Défaire unilatéralement quelque chose que quelqu'un d'autre
+    a déjà constaté n'est pas une fonctionnalité, c'est un bug.
+    """
+    viewer_id = int(viewer["user_id"])
+    rights = current_entitlements(conn, viewer_id, cfg)
+    if not rights.can_rewind:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED, "revenir en arrière demande MotoMatch Plus"
+        )
+
+    last = repo.last_swipe(conn, viewer_id)
+    if last is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "aucun swipe à annuler")
+    other_id = int(last["to_user_id"])
+    if repo.get_match_for_user_pair(conn, viewer_id, other_id) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "ce like a créé un match, il ne peut plus être annulé"
+        )
+
+    repo.delete_swipe(conn, int(last["id"]), viewer_id)
+    return {"undone": True, "profile_user_id": other_id}
 
 
 # --- Interface web ----------------------------------------------------------

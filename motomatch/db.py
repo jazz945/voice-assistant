@@ -193,6 +193,43 @@ CREATE TABLE IF NOT EXISTS ride_participants (
     UNIQUE (ride_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS subscriptions (
+    user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    tier         TEXT    NOT NULL DEFAULT 'gratuit' CHECK (tier IN ('gratuit', 'plus')),
+    started_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    -- NULL = sans échéance (offert, compte de test). Sinon relu à chaque
+    -- requête : aucune tâche de fond ne peut prendre du retard et laisser un
+    -- compte payant sans droits, ou l'inverse.
+    expires_at   TEXT,
+    provider     TEXT    NOT NULL DEFAULT 'manuel',
+    external_id  TEXT,
+    cancelled_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS boosts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    started_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT    NOT NULL
+);
+
+-- Journal des événements de paiement. La contrainte d'unicité fait
+-- l'idempotence : un webhook rejoué — ce que tous les prestataires font en cas
+-- de doute — ne prolonge pas l'abonnement une seconde fois.
+CREATE TABLE IF NOT EXISTS payment_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider    TEXT    NOT NULL,
+    event_id    TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    -- Compte tel que le prestataire l'annonce, sans clé étrangère : c'est une
+    -- donnée reçue de l'extérieur, et un évènement citant un compte inexistant
+    -- est justement celui qu'on veut garder — quelqu'un sonde l'URL. Une
+    -- contrainte ici ferait échouer l'écriture au moment où elle sert le plus.
+    user_id     INTEGER,
+    received_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (provider, event_id)
+);
+
 CREATE TABLE IF NOT EXISTS rate_limit_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     bucket     TEXT NOT NULL,
@@ -215,6 +252,8 @@ CREATE INDEX IF NOT EXISTS idx_crossings_a ON crossings(user_a_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_crossings_b ON crossings(user_b_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_rides_start ON rides(start_at, status);
 CREATE INDEX IF NOT EXISTS idx_ride_participants ON ride_participants(ride_id, status);
+CREATE INDEX IF NOT EXISTS idx_boosts_active ON boosts(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_swipes_daily ON swipes(from_user_id, direction, created_at);
 """
 
 

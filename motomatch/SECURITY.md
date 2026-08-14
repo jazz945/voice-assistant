@@ -114,6 +114,33 @@ deux consenti se sont trouvées dans la même zone de 500 m au même quart d'heu
 C'est le produit. Ce qu'elle ne révèle jamais : un trajet, une position exacte,
 ou quoi que ce soit sur quelqu'un qui ne l'a pas activée.
 
+## Paiement
+
+L'activation d'un abonnement ne vient **jamais** du client. Une route « je viens
+de payer » se déclenche depuis n'importe quel terminal : l'abonnement serait
+gratuit pour qui sait envoyer une requête. `POST /api/subscription/checkout`
+n'accorde donc aucun droit — il ouvre un paiement, rien de plus. Seul le webhook
+du prestataire active, et il est vérifié sur trois points :
+
+1. **Signature HMAC-SHA256**, comparée en temps constant. Une comparaison naïve
+   laisserait fuir la signature attendue octet par octet.
+2. **Horodatage** dans une fenêtre de 5 minutes. Sans cela, un message signé
+   capté une fois se rejouerait indéfiniment pour prolonger un abonnement.
+3. **Idempotence** par `UNIQUE (provider, event_id)`. Les prestataires rejouent
+   leurs webhooks au moindre doute ; sans ce verrou, un rejeu prolongerait
+   l'abonnement une seconde fois.
+
+Le montant n'est jamais accepté du client : il choisit un code d'offre, le prix
+vient du serveur.
+
+Le journal `payment_events` n'a **pas** de clé étrangère vers `users` : un
+évènement citant un compte inexistant est justement celui qu'on veut conserver
+— quelqu'un sonde l'URL — et une contrainte ferait échouer l'écriture au moment
+où elle sert le plus.
+
+En cas d'échéance illisible, le compte retombe en gratuit. Se tromper dans ce
+sens coûte un mécontentement ; dans l'autre, un abonnement gratuit à vie.
+
 ## Sécurité des personnes
 
 Fonctions exigées par l'App Store (règle 1.2, contenu généré par les
@@ -222,7 +249,14 @@ ouverture au public.
     fictifs. Les parades usuelles (attestation d'intégrité de l'application,
     contrôle de plausibilité des vitesses entre deux pings) restent à ajouter.
 11. **Balades sans messagerie de groupe** ni rappel avant le départ.
-12. **Pas d'audit externe.** Aucune revue de sécurité indépendante n'a été menée
+12. **Aucun prestataire de paiement n'est branché.** La vérification des
+    webhooks est complète et testée, mais la création des sessions de paiement
+    demande des clés d'API et un compte. Sur iOS et Android, la facturation
+    d'Apple et de Google est de toute façon obligatoire (15 à 30 %), et
+    contourner par un prestataire tiers fait rejeter l'application.
+13. **Obligations légales non couvertes** : société déclarée, TVA, CGV, droit de
+    rétractation de 14 jours sur un abonnement en France. Ce n'est pas du code.
+14. **Pas d'audit externe.** Aucune revue de sécurité indépendante n'a été menée
     sur ce code.
 
 ## Signaler une vulnérabilité

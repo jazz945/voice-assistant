@@ -111,6 +111,7 @@ function showView(name) {
   if (name === "security") loadSecurity();
   if (name === "crossings") loadCrossings();
   if (name === "rides") loadRides();
+  if (name === "plus") loadPlus();
 }
 
 // Le jeton d'accès vit en sessionStorage (effacé à la fermeture de l'onglet),
@@ -740,6 +741,160 @@ async function cancelRide(rideId) {
     await api(`/api/rides/${rideId}`, { method: "DELETE" });
     toast("Balade annulée.");
     await loadRides();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+// --- Abonnement -------------------------------------------------------------
+
+async function loadPlus() {
+  try {
+    const [abo, offres, likes] = await Promise.all([
+      api("/api/subscription"),
+      api("/api/subscription/offers"),
+      api("/api/likes/received"),
+    ]);
+    renderStatut(abo);
+    renderOffres(offres.offers, abo);
+    renderLikesRecus(likes);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function renderStatut(abo) {
+  const q = abo.likes;
+  const boosts = abo.boosts;
+  const plus = abo.tier === "plus";
+
+  $("#plus-status").innerHTML = `
+    <h2>${plus ? "MotoMatch Plus" : "Compte gratuit"}</h2>
+    <div class="chips">
+      <span class="badge${plus ? " strong" : ""}">${plus ? "abonné" : "gratuit"}</span>
+      ${abo.expires_at ? `<span class="badge">jusqu'au ${escapeHtml(abo.expires_at.slice(0, 10))}</span>` : ""}
+      ${abo.cancelled_at ? '<span class="badge">résilié</span>' : ""}
+    </div>
+    <p class="muted small">
+      ${q.unlimited
+        ? "Likes illimités."
+        : `${q.remaining} like(s) restant(s) aujourd'hui sur ${q.limit}. Remise à zéro à minuit.`}
+    </p>
+    <p class="muted small">
+      Boosts : ${boosts.used_this_month}/${boosts.included} utilisés ce mois-ci.
+      ${boosts.active_until ? `Boost en cours jusqu'à ${escapeHtml(boosts.active_until)}.` : ""}
+    </p>
+    <div class="row">
+      ${plus && boosts.included > 0 ? '<button class="primary" id="boost-btn">Booster mon profil</button>' : ""}
+      ${plus ? '<button class="secondary" id="rewind-btn">Annuler mon dernier swipe</button>' : ""}
+      ${plus && !abo.cancelled_at ? '<button class="link-btn danger-text" id="cancel-abo">Résilier</button>' : ""}
+    </div>`;
+
+  const boost = $("#boost-btn");
+  if (boost) boost.addEventListener("click", lancerBoost);
+  const rewind = $("#rewind-btn");
+  if (rewind) rewind.addEventListener("click", annulerDernierSwipe);
+  const cancel = $("#cancel-abo");
+  if (cancel) cancel.addEventListener("click", resilier);
+}
+
+function renderOffres(offres, abo) {
+  $("#offres").innerHTML = offres
+    .map(
+      (o) => `
+      <article class="rider">
+        <div class="rider-head">
+          <div class="rider-identity">
+            <h3>${escapeHtml(o.label)}</h3>
+            <p class="rider-sub">${o.price.toFixed(2)} ${escapeHtml(o.currency)} / ${escapeHtml(o.period)}</p>
+          </div>
+        </div>
+        <ul class="notes">${o.highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join("")}</ul>
+        <div class="rider-actions">
+          <button class="btn-like" data-offre="${escapeHtml(o.code)}"
+                  ${abo.tier === "plus" ? "disabled" : ""}>
+            ${abo.tier === "plus" ? "Déjà abonné" : "S'abonner"}
+          </button>
+        </div>
+      </article>`,
+    )
+    .join("");
+  $("#offres").querySelectorAll("[data-offre]").forEach((b) => {
+    b.addEventListener("click", () => souscrire(b.dataset.offre));
+  });
+}
+
+function renderLikesRecus(likes) {
+  const zone = $("#likes-recus");
+  if (likes.locked) {
+    zone.innerHTML = `
+      <p class="empty">
+        <strong>${likes.count}</strong> personne(s) t'ont liké.<br />
+        ${escapeHtml(likes.message)}
+      </p>`;
+    return;
+  }
+  zone.innerHTML = likes.count
+    ? likes.results
+        .map((item) => {
+          const p = item.profile;
+          return `
+            <article class="rider ${categoryClass(p.bike_category)}">
+              <div class="rider-head">
+                ${avatarMarkup(p)}
+                <div class="rider-identity">
+                  <h3>${escapeHtml(p.display_name)}, ${p.age}</h3>
+                  <p class="rider-sub">${escapeHtml(p.city)}</p>
+                  <span class="chip famille">${escapeHtml(p.bike_category)}</span>
+                </div>
+              </div>
+              <div class="bike">
+                <strong>${escapeHtml(p.bike_brand)} ${escapeHtml(p.bike_model)}</strong>
+                <div class="bike-meta">${p.engine_cc} cm³</div>
+              </div>
+            </article>`;
+        })
+        .join("")
+    : '<p class="empty">Personne pour le moment.</p>';
+}
+
+async function souscrire(code) {
+  try {
+    const r = await api("/api/subscription/checkout", {
+      method: "POST",
+      body: { offer_code: code },
+    });
+    toast(r.detail || "Paiement à brancher sur cette installation.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function lancerBoost() {
+  try {
+    const r = await api("/api/boost", { method: "POST", body: {} });
+    toast(`Boost lancé jusqu'à ${r.active_until}. Encore ${r.remaining_this_month} ce mois-ci.`);
+    await loadPlus();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function annulerDernierSwipe() {
+  try {
+    await api("/api/swipes/last", { method: "DELETE" });
+    toast("Dernier swipe annulé, le profil revient dans le deck.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function resilier() {
+  if (!confirm("Résilier l'abonnement ? L'accès reste ouvert jusqu'à l'échéance déjà payée.")) return;
+  try {
+    const r = await api("/api/subscription", { method: "DELETE" });
+    toast(`Résilié. Accès conservé jusqu'au ${r.access_until || "terme"}.`);
+    await loadPlus();
   } catch (error) {
     toast(error.message, true);
   }

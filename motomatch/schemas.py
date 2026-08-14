@@ -334,6 +334,24 @@ class ParticipationDecisionInput(BaseModel):
         return decision
 
 
+# --- Abonnement -------------------------------------------------------------
+
+
+class CheckoutInput(BaseModel):
+    """Demande d'ouverture d'un paiement.
+
+    Aucun montant n'est accepté du client : il ne choisit qu'une offre, et le
+    prix vient du serveur. Laisser le client proposer un montant reviendrait à
+    lui laisser fixer son prix.
+    """
+
+    offer_code: str = Field(min_length=1, max_length=40)
+
+
+class BoostInput(BaseModel):
+    confirm: bool = True
+
+
 class DiscoveryFilters(BaseModel):
     max_distance_km: int | None = Field(default=None, ge=1, le=2000)
     min_age: int | None = Field(default=None, ge=MIN_AGE, le=MAX_AGE)
