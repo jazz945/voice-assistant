@@ -53,6 +53,10 @@ d'environnement `MOTOMATCH_DB`.
 - **Like / pass et matchs** — un match est créé dès que le like est réciproque ;
   les profils déjà évalués disparaissent du deck.
 - **Messagerie** — conversation par match, réservée aux deux participants.
+- **Couleur par famille de moto** — chaque famille a sa teinte, reprise sur le
+  casque, le filet de la carte et le cercle de score : on repère une sportive
+  d'un coup d'œil sans lire. À défaut de photo, le profil affiche un **casque
+  dessiné** plutôt qu'un visage inventé (`static/avatars.js`).
 - **Croisements** — comme Happn, mais pour la route : quand deux motards passent
   au même endroit au même moment, l'application le retient et précise *comment*
   ils se sont croisés (en roulant ou à l'arrêt, en sens inverse ou dans le même
@@ -159,7 +163,7 @@ motomatch/
 ├── seed.py         profils de démonstration
 ├── static/         interface web (HTML/CSS/JS sans dépendance)
 ├── tools/          génération des icônes
-└── tests/          145 tests (algorithme, API, sécurité, croisements, balades, PWA)
+└── tests/          149 tests (algorithme, API, sécurité, croisements, balades, PWA)
 ```
 
 ## Tests

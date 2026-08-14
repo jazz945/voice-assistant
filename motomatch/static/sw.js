@@ -11,7 +11,7 @@
  * `/api/`, mais on ne s'en remet pas à cela : la règle est appliquée ici aussi.
  */
 
-const CACHE = "motomatch-shell-v1";
+const CACHE = "motomatch-shell-v2";
 
 // Coque de l'application : statique, sans donnée personnelle.
 const SHELL = [
@@ -19,6 +19,7 @@ const SHELL = [
   "/static/index.html",
   "/static/styles.css",
   "/static/app.js",
+  "/static/avatars.js",
   "/static/manifest.webmanifest",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",

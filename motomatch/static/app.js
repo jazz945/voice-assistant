@@ -327,11 +327,13 @@ function renderRiderCard(item) {
     .join("");
 
   return `
-    <article class="rider">
+    <article class="rider ${categoryClass(p.bike_category)}">
       <div class="rider-head">
-        <div>
+        ${avatarMarkup(p)}
+        <div class="rider-identity">
           <h3>${escapeHtml(p.display_name)}, ${p.age}</h3>
           <p class="rider-sub">${escapeHtml(p.city)} · ${item.distance_km} km</p>
+          <span class="chip famille">${escapeHtml(p.bike_category)}</span>
         </div>
         <div class="score">${Math.round(item.score)}<small>compat.</small></div>
       </div>
@@ -384,11 +386,15 @@ async function loadMatches() {
     list.innerHTML = data.results
       .map(
         (match) => `
-        <li data-match="${match.match_id}" data-name="${escapeHtml(match.profile.display_name)}">
-          <div class="match-name">${escapeHtml(match.profile.display_name)}</div>
-          <div class="match-preview">${escapeHtml(
-            match.last_message || `${match.profile.bike_brand} ${match.profile.bike_model}`,
-          )}</div>
+        <li data-match="${match.match_id}" data-name="${escapeHtml(match.profile.display_name)}"
+            class="${categoryClass(match.profile.bike_category)}">
+          ${avatarMarkup(match.profile, 40)}
+          <div>
+            <div class="match-name">${escapeHtml(match.profile.display_name)}</div>
+            <div class="match-preview">${escapeHtml(
+              match.last_message || `${match.profile.bike_brand} ${match.profile.bike_model}`,
+            )}</div>
+          </div>
         </li>`,
       )
       .join("");
@@ -492,11 +498,13 @@ function renderCrossingCard(item) {
     : "";
 
   return `
-    <article class="rider">
+    <article class="rider ${categoryClass(p.bike_category)}">
       <div class="rider-head">
-        <div>
+        ${avatarMarkup(p)}
+        <div class="rider-identity">
           <h3>${escapeHtml(p.display_name)}, ${p.age}</h3>
           <p class="rider-sub">${escapeHtml(p.city)} · ${escapeHtml(item.last_seen_at)}</p>
+          <span class="chip famille">${escapeHtml(p.bike_category)}</span>
         </div>
         <div class="crossing-mark">${item.times}×</div>
       </div>

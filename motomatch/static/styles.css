@@ -357,3 +357,62 @@ label.checkbox small { flex-basis: 100%; margin-left: 1.6rem; }
   .link-btn { min-height: 0; }
   .hint code { word-break: break-all; }
 }
+
+/* --- Avatars et couleur de famille de moto --- */
+/* `--famille` est posée sur la carte par categoryStyle() ; tout ce qui suit
+   s'y accroche, pour qu'une famille de moto se reconnaisse sans lire. */
+.avatar-slot {
+  position: relative;
+  display: block;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--sunken, #101318);
+}
+
+.avatar { display: block; width: 100%; height: 100%; }
+.avatar-photo { position: absolute; inset: 0; object-fit: cover; }
+
+.rider-head { align-items: center; gap: 0.8rem; }
+.rider-identity { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.rider-identity h3 { overflow-wrap: anywhere; }
+
+.chip.famille {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--famille, var(--amber)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--famille, var(--amber)) 45%, transparent);
+  color: var(--famille, var(--amber));
+  font-weight: 600;
+  font-size: 0.74rem;
+  text-transform: lowercase;
+}
+
+/* Le filet de la carte et celui du bloc moto prennent la teinte de la famille. */
+.rider { border-top: 2px solid var(--famille, var(--line)); }
+.rider .bike { border-left-color: var(--famille, var(--amber)); }
+.rider .score { border-color: var(--famille, var(--amber)); color: var(--famille, var(--amber)); }
+
+/* Liste des matchs : vignette + texte. */
+.match-list li { display: flex; align-items: center; gap: 0.65rem; }
+.match-list li .avatar-slot { width: 40px; height: 40px; border-radius: 11px; }
+.match-list li > div { min-width: 0; }
+.match-list li .match-name,
+.match-list li .match-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 480px) {
+  .avatar-slot { width: 48px; height: 48px; }
+}
+
+/* Teintes par famille de moto. Doivent rester alignées sur CATEGORY_COLOURS
+   dans avatars.js, qui les utilise pour dessiner les casques. */
+.famille-sportive    { --famille: #ff7a92; --famille-sombre: #e11d48; }
+.famille-roadster    { --famille: #ffa76b; --famille-sombre: #d96b22; }
+.famille-trail       { --famille: #7ddfa0; --famille-sombre: #2f9e5c; }
+.famille-routiere    { --famille: #7dbcff; --famille-sombre: #2f7fd4; }
+.famille-custom      { --famille: #c9a8ff; --famille-sombre: #7c4dcc; }
+.famille-supermotard { --famille: #ffe07a; --famille-sombre: #d9a41a; }
+.famille-cross       { --famille: #ffa26b; --famille-sombre: #e05a15; }
+.famille-scooter     { --famille: #8fe8dc; --famille-sombre: #2f9e94; }
+.famille-inconnue    { --famille: #b8c2cf; --famille-sombre: #69737f; }
