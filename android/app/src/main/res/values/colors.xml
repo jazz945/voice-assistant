@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="asphalt">#14161A</color>
+    <color name="asphalt_soft">#1C1F25</color>
+    <color name="line">#2A2F38</color>
+    <color name="ink">#EEF1F5</color>
+    <color name="muted">#98A1AF</color>
+    <color name="amber">#FF8A3D</color>
+</resources>

@@ -1,0 +1,19 @@
+# Réseau local, sans nom de domaine public.
+#
+# `tls internal` fait signer le certificat par l'autorité interne de Caddy.
+# Les navigateurs ne la connaissent pas : il faut installer sa racine sur
+# chaque appareil, sinon ils afficheront un avertissement (voir README).
+#
+# MOTOMATCH_SITE_ADDRESS = motomatch.maison  (ou https://192.168.1.20)
+
+{$MOTOMATCH_SITE_ADDRESS} {
+	tls internal
+
+	encode zstd gzip
+	header -Server
+
+	reverse_proxy app:8000 {
+		health_uri /api/health
+		health_interval 30s
+	}
+}

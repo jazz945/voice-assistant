@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Version de production : HTTPS obligatoire, sans exception.
+
+  Le format ne sait pas exprimer une plage d'adresses (pas de CIDR) : impossible
+  d'autoriser « tout le réseau local » ici. La compilation de débogage surcharge
+  donc ce fichier par `src/debug/res/xml/`, qui autorise le clair pour permettre
+  les essais contre un serveur de réseau local.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

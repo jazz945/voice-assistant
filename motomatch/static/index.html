@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MotoMatch — rencontres entre motards</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#14161a" />
+  <link rel="icon" href="/static/icons/favicon-64.png" sizes="64x64" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="MotoMatch" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">MM</span>
+      <div>
+        <h1>MotoMatch</h1>
+        <p class="tagline">Trouve la personne avec qui partager la route</p>
+      </div>
+    </div>
+    <nav id="nav" class="nav hidden">
+      <button class="nav-btn" data-view="discover">Découvrir</button>
+      <button class="nav-btn" data-view="crossings">Croisés</button>
+      <button class="nav-btn" data-view="rides">Balades</button>
+      <button class="nav-btn" data-view="matches">Matchs</button>
+      <button class="nav-btn" data-view="plus">Plus</button>
+      <button class="nav-btn" data-view="profile">Mon profil</button>
+      <button class="nav-btn" data-view="security">Sécurité</button>
+      <button class="nav-btn ghost" id="logout-btn">Déconnexion</button>
+    </nav>
+  </header>
+
+  <main id="app">
+    <!-- Authentification -->
+    <section id="view-auth" class="view">
+      <div class="card auth-card">
+        <h2>Bienvenue</h2>
+        <p class="muted">Crée un compte ou connecte-toi pour rejoindre le peloton.</p>
+        <form id="auth-form" class="form">
+          <label>E-mail
+            <input type="email" name="email" required autocomplete="email" />
+          </label>
+          <label>Mot de passe
+            <input type="password" name="password" required minlength="8" autocomplete="current-password" />
+            <small class="muted">8 caractères minimum</small>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="age-attestation" /> Je certifie avoir 18 ans ou plus
+            <small class="muted">(requis à l'inscription uniquement)</small>
+          </label>
+          <div class="row">
+            <button type="submit" class="primary" data-mode="login">Se connecter</button>
+            <button type="button" class="secondary" id="register-btn">Créer un compte</button>
+          </div>
+        </form>
+        <p class="hint">Jeu de démo chargé ? Essaie <code>camille@motomatch.example.com</code> / <code>Vercors-Col-2024</code>.</p>
+      </div>
+    </section>
+
+    <!-- Profil -->
+    <section id="view-profile" class="view hidden">
+      <div class="card">
+        <h2>Mon profil moto</h2>
+        <p class="muted">Ces informations alimentent le score de compatibilité : sois précis.</p>
+        <form id="profile-form" class="form grid">
+          <label>Prénom<input name="display_name" required maxlength="60" /></label>
+          <label>Année de naissance<input type="number" name="birth_year" required min="1926" max="2010" /></label>
+          <label>Je suis<input name="gender" required placeholder="femme, homme, non-binaire…" /></label>
+          <label>Je cherche<input name="seeking" required placeholder="femmes, hommes…" /></label>
+          <label>Ville<input name="city" required /></label>
+          <label>Latitude<input type="number" step="0.0001" name="latitude" required /></label>
+          <label>Longitude<input type="number" step="0.0001" name="longitude" required /></label>
+          <label>Marque<input name="bike_brand" required placeholder="Yamaha" /></label>
+          <label>Modèle<input name="bike_model" required placeholder="MT-09" /></label>
+          <label>Année moto<input type="number" name="bike_year" min="1900" max="2100" /></label>
+          <label>Cylindrée (cm³)<input type="number" name="engine_cc" required min="50" max="3000" /></label>
+          <label>Famille de moto
+            <select name="bike_category" id="bike-category" required></select>
+          </label>
+          <label>Rythme de conduite
+            <select name="pace" id="pace" required></select>
+          </label>
+          <label>Années de permis<input type="number" name="experience_years" min="0" max="80" value="0" /></label>
+          <label>Km par an<input type="number" name="annual_km" min="0" max="200000" value="0" /></label>
+          <label>Distance max pour un rendez-vous (km)
+            <input type="number" name="max_travel_km" min="5" max="2000" value="100" />
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" name="has_passenger_seat" checked /> Ma moto accepte un passager
+          </label>
+          <fieldset class="span-all">
+            <legend>Mes pratiques</legend>
+            <div id="styles-choices" class="chips"></div>
+          </fieldset>
+          <label class="span-all">Bio
+            <textarea name="bio" rows="3" maxlength="1000" placeholder="Ce que tu aimes sur la route…"></textarea>
+          </label>
+          <label class="span-all">Photo (URL)
+            <input name="photo_url" maxlength="500" placeholder="https://…" />
+          </label>
+          <div class="row span-all">
+            <button type="submit" class="primary">Enregistrer le profil</button>
+            <button type="button" class="secondary" id="geo-btn">Utiliser ma position</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Découverte -->
+    <section id="view-discover" class="view hidden">
+      <div class="card filters">
+        <h2>Filtres</h2>
+        <form id="filter-form" class="form grid compact">
+          <label>Rayon (km)<input type="number" name="max_distance_km" min="1" max="2000" placeholder="illimité" /></label>
+          <label>Âge min<input type="number" name="min_age" min="18" max="99" placeholder="18" /></label>
+          <label>Âge max<input type="number" name="max_age" min="18" max="99" placeholder="99" /></label>
+          <label>Famille de moto
+            <select name="categories" id="filter-category"><option value="">Toutes</option></select>
+          </label>
+          <label>Pratique
+            <select name="styles" id="filter-style"><option value="">Toutes</option></select>
+          </label>
+          <div class="row">
+            <button type="submit" class="primary">Chercher</button>
+          </div>
+        </form>
+      </div>
+      <div id="deck" class="deck"></div>
+    </section>
+
+    <!-- Matchs -->
+    <section id="view-matches" class="view hidden">
+      <div class="chat-layout">
+        <div class="card match-list">
+          <h2>Mes matchs</h2>
+          <ul id="match-list"></ul>
+        </div>
+        <div class="card chat">
+          <h2 id="chat-title">Sélectionne un match</h2>
+          <div id="chat-messages" class="messages"></div>
+          <form id="chat-form" class="chat-form hidden">
+            <input name="body" placeholder="Écris ton message…" maxlength="2000" autocomplete="off" required />
+            <button type="submit" class="primary">Envoyer</button>
+          </form>
+        </div>
+      </div>
+    </section>
+    <!-- Croisements -->
+    <section id="view-crossings" class="view hidden">
+      <div class="card">
+        <h2>Motards croisés</h2>
+        <p class="muted">
+          Quand tu croises quelqu'un qui a aussi l'application, ça se retrouve ici.
+          Un signe de la main se rend : si vous vous saluez tous les deux, vous matchez.
+        </p>
+        <label class="checkbox toggle-row">
+          <input type="checkbox" id="crossings-toggle" />
+          <span>Activer les croisements</span>
+        </label>
+        <p class="muted small">
+          Désactivé par défaut. Aucune coordonnée GPS n'est conservée : ta position est
+          réduite à une zone de 500 m et effacée sous 24 h. Couper la fonction efface
+          immédiatement ce qui a été enregistré.
+        </p>
+        <div class="row" id="crossings-actions">
+          <button type="button" class="secondary" id="ping-btn">Signaler ma position</button>
+          <button type="button" class="link-btn danger-text" id="purge-crossings-btn">
+            Effacer tout mon historique de croisements
+          </button>
+        </div>
+      </div>
+      <div id="crossings-list" class="deck"></div>
+    </section>
+
+    <!-- Balades -->
+    <section id="view-rides" class="view hidden">
+      <div class="card">
+        <h2>Organiser une balade</h2>
+        <form id="ride-form" class="form grid">
+          <label class="span-all">Titre
+            <input name="title" required minlength="3" maxlength="100"
+                   placeholder="Cols du Vercors, départ tôt" />
+          </label>
+          <label>Ville de départ<input name="start_city" required /></label>
+          <label>Latitude départ<input type="number" step="0.0001" name="start_latitude" required /></label>
+          <label>Longitude départ<input type="number" step="0.0001" name="start_longitude" required /></label>
+          <label>Date et heure<input type="datetime-local" name="start_at" required /></label>
+          <label>Distance (km)<input type="number" name="distance_km" min="0" max="5000" value="200" /></label>
+          <label>Rythme<select name="pace" id="ride-pace" required></select></label>
+          <label>Type de route<select name="route_type" id="ride-route" required></select></label>
+          <label>Participants max<input type="number" name="max_participants" min="2" max="100" value="8" /></label>
+          <label>Autorisation
+            <select name="visibility" id="ride-visibility" required></select>
+          </label>
+          <fieldset class="span-all">
+            <legend>Motos bienvenues (aucune sélection = toutes)</legend>
+            <div id="ride-categories" class="chips"></div>
+          </fieldset>
+          <label class="span-all">Description
+            <textarea name="description" rows="2" maxlength="2000"
+                      placeholder="Rythme, pauses, niveau attendu…"></textarea>
+          </label>
+          <div class="row span-all">
+            <button type="submit" class="primary">Créer la balade</button>
+          </div>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Balades à venir</h2>
+        <div id="rides-list" class="deck"></div>
+      </div>
+    </section>
+
+    <!-- Abonnement -->
+    <section id="view-plus" class="view hidden">
+      <div class="card" id="plus-status"></div>
+
+      <div class="card">
+        <h2>Qui t'a liké</h2>
+        <div id="likes-recus" class="deck"></div>
+      </div>
+
+      <div class="card">
+        <h2>MotoMatch Plus</h2>
+        <div id="offres" class="deck"></div>
+        <p class="muted small">
+          Paiement non branché sur cette installation. Sur iOS et Android, la
+          facturation d'Apple et de Google est obligatoire (15 à 30 % de commission).
+        </p>
+      </div>
+    </section>
+
+    <!-- Sécurité et confidentialité -->
+    <section id="view-security" class="view hidden">
+      <div class="card">
+        <h2>Mot de passe</h2>
+        <form id="password-form" class="form grid compact">
+          <label>Mot de passe actuel
+            <input type="password" name="current_password" required autocomplete="current-password" />
+          </label>
+          <label>Nouveau mot de passe
+            <input type="password" name="new_password" required autocomplete="new-password" />
+          </label>
+          <div class="row"><button type="submit" class="primary">Changer</button></div>
+        </form>
+        <p class="muted">Changer le mot de passe déconnecte tous les autres appareils.</p>
+      </div>
+
+      <div class="card">
+        <h2>Appareils connectés</h2>
+        <p class="muted">Une session que tu ne reconnais pas ? Révoque-la immédiatement.</p>
+        <ul id="session-list" class="plain-list"></ul>
+        <div class="row">
+          <button type="button" class="secondary" id="logout-all-btn">
+            Déconnecter tous les appareils
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Personnes bloquées</h2>
+        <ul id="block-list" class="plain-list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Mes données</h2>
+        <p class="muted">
+          Télécharge l'intégralité de tes données, ou supprime définitivement ton compte.
+        </p>
+        <div class="row">
+          <button type="button" class="secondary" id="export-btn">Exporter mes données</button>
+        </div>
+        <form id="delete-form" class="form grid compact danger-zone">
+          <label>Mot de passe
+            <input type="password" name="password" required autocomplete="current-password" />
+          </label>
+          <label>Tape SUPPRIMER pour confirmer
+            <input name="confirmation" required placeholder="SUPPRIMER" />
+          </label>
+          <div class="row">
+            <button type="submit" class="danger">Supprimer définitivement mon compte</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- Boîte de dialogue de signalement -->
+  <dialog id="report-dialog" class="card">
+    <h2>Signaler <span id="report-target"></span></h2>
+    <form id="report-form" class="form">
+      <label>Motif
+        <select name="reason" id="report-reason" required></select>
+      </label>
+      <label>Détails (facultatif)
+        <textarea name="details" rows="3" maxlength="1000"></textarea>
+      </label>
+      <p class="muted">Le signalement bloque également cette personne.</p>
+      <div class="row">
+        <button type="submit" class="danger">Envoyer le signalement</button>
+        <button type="button" class="secondary" id="report-cancel">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/avatars.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

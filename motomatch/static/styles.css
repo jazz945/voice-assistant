@@ -1,0 +1,418 @@
+:root {
+  --asphalt: #14161a;
+  --asphalt-soft: #1c1f25;
+  --line: #2a2f38;
+  --ink: #eef1f5;
+  --muted: #98a1af;
+  --amber: #ff8a3d;
+  --amber-dark: #d96b22;
+  --green: #4ec97a;
+  --red: #e05a5a;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 20% -10%, #232833 0%, var(--asphalt) 55%);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+.hidden { display: none !important; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+
+/* --- Barre supérieure --- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.brand { display: flex; align-items: center; gap: 0.85rem; }
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--amber), var(--amber-dark));
+  font-weight: 800;
+  color: #1a1206;
+  letter-spacing: -0.5px;
+}
+
+.topbar h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0.5px; }
+.tagline { margin: 0; color: var(--muted); font-size: 0.82rem; }
+
+.nav { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+.nav-btn {
+  background: var(--asphalt-soft);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.nav-btn:hover { border-color: var(--amber); }
+.nav-btn.active { background: var(--amber); border-color: var(--amber); color: #1a1206; font-weight: 600; }
+.nav-btn.ghost { color: var(--muted); }
+
+/* --- Structure --- */
+main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+
+.card {
+  background: var(--asphalt-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1.25rem;
+}
+
+.card h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+.auth-card { max-width: 420px; margin: 3rem auto; }
+
+/* --- Formulaires --- */
+.form { display: flex; flex-direction: column; gap: 0.85rem; margin-top: 1rem; }
+.form.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.form.compact { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; }
+.span-all { grid-column: 1 / -1; }
+
+label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.85rem; color: var(--muted); }
+label.checkbox { flex-direction: row; align-items: center; gap: 0.5rem; }
+
+input, select, textarea {
+  background: #101318;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  padding: 0.6rem 0.7rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  width: 100%;
+}
+
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); border-color: transparent; }
+label.checkbox input { width: auto; }
+
+fieldset { border: 1px solid var(--line); border-radius: 9px; padding: 0.8rem; }
+legend { color: var(--muted); font-size: 0.85rem; padding: 0 0.35rem; }
+
+.row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+
+button {
+  border: none;
+  border-radius: 9px;
+  padding: 0.62rem 1.1rem;
+  font-size: 0.92rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button.primary { background: var(--amber); color: #1a1206; font-weight: 650; }
+button.primary:hover { background: var(--amber-dark); }
+button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+button.secondary:hover { border-color: var(--amber); }
+
+.hint { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
+code { background: #101318; padding: 0.1rem 0.35rem; border-radius: 5px; font-size: 0.82rem; }
+
+/* --- Chips de pratiques --- */
+.chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  background: #101318;
+  color: var(--muted);
+  user-select: none;
+}
+
+.chip.selected { background: var(--amber); border-color: var(--amber); color: #1a1206; font-weight: 600; }
+.chip.static { cursor: default; background: #191d24; color: var(--ink); }
+
+/* --- Deck de profils --- */
+.deck { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+
+.rider {
+  background: var(--asphalt-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.rider-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem; }
+.rider-head h3 { margin: 0; font-size: 1.1rem; }
+.rider-sub { color: var(--muted); font-size: 0.84rem; margin: 0.15rem 0 0; }
+
+.score {
+  display: grid;
+  place-items: center;
+  min-width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 2px solid var(--amber);
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--amber);
+}
+
+.score small { display: block; font-size: 0.55rem; color: var(--muted); font-weight: 400; }
+
+.bike {
+  background: #101318;
+  border-left: 3px solid var(--amber);
+  border-radius: 7px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.88rem;
+}
+
+.bike-meta { color: var(--muted); font-size: 0.8rem; margin-top: 0.2rem; }
+.bio { font-size: 0.88rem; line-height: 1.45; margin: 0; }
+.notes { list-style: none; padding: 0; margin: 0; font-size: 0.8rem; color: var(--green); }
+.notes li::before { content: "▸ "; }
+.rider-actions { display: flex; gap: 0.6rem; margin-top: auto; }
+.rider-actions button { flex: 1; }
+.btn-pass { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+.btn-pass:hover { border-color: var(--red); color: var(--red); }
+.btn-like { background: var(--green); color: #0d2415; font-weight: 650; }
+
+.empty { color: var(--muted); text-align: center; padding: 2.5rem 1rem; grid-column: 1 / -1; }
+
+/* --- Matchs et messagerie --- */
+.chat-layout { display: grid; grid-template-columns: minmax(230px, 1fr) 2fr; gap: 1rem; align-items: start; }
+.match-list ul { list-style: none; padding: 0; margin: 0.75rem 0 0; }
+
+.match-list li {
+  padding: 0.7rem;
+  border-radius: 9px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.match-list li:hover { background: #101318; }
+.match-list li.active { background: #101318; border-color: var(--amber); }
+.match-name { font-weight: 600; font-size: 0.95rem; }
+.match-preview { color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+
+.chat { display: flex; flex-direction: column; min-height: 420px; }
+.messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.8rem 0; max-height: 55vh; }
+
+.bubble {
+  max-width: 75%;
+  padding: 0.5rem 0.8rem;
+  border-radius: 13px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.bubble.mine { align-self: flex-end; background: var(--amber); color: #1a1206; border-bottom-right-radius: 4px; }
+.bubble.theirs { align-self: flex-start; background: #101318; border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.chat-form { display: flex; gap: 0.55rem; border-top: 1px solid var(--line); padding-top: 0.8rem; }
+
+/* --- Toast --- */
+.toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--asphalt-soft);
+  border: 1px solid var(--amber);
+  color: var(--ink);
+  padding: 0.7rem 1.2rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  z-index: 20;
+  max-width: 90vw;
+}
+
+.toast.error { border-color: var(--red); }
+
+@media (max-width: 720px) {
+  .chat-layout { grid-template-columns: 1fr; }
+  main { padding: 1rem; }
+}
+
+/* --- Sécurité : listes, actions discrètes, zone dangereuse --- */
+.plain-list { list-style: none; padding: 0; margin: 0.75rem 0 0; }
+
+.plain-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.plain-list li:last-child { border-bottom: none; }
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  text-decoration: underline;
+  padding: 0.2rem 0;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.link-btn:hover { color: var(--amber); }
+.danger-text { color: var(--red); }
+.danger-text:hover { color: var(--red); filter: brightness(1.2); }
+
+.rider-safety {
+  display: flex;
+  gap: 0.9rem;
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+button.danger { background: var(--red); color: #2a0d0d; font-weight: 650; }
+button.danger:hover { filter: brightness(1.1); }
+
+.danger-zone {
+  border: 1px solid var(--red);
+  border-radius: 9px;
+  padding: 0.9rem;
+  margin-top: 1rem;
+}
+
+dialog {
+  border: 1px solid var(--line);
+  color: var(--ink);
+  max-width: 420px;
+  width: 90vw;
+}
+
+dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+
+/* --- Croisements et balades --- */
+.toggle-row { margin: 0.9rem 0 0.4rem; font-size: 0.95rem; color: var(--ink); }
+.muted.small { font-size: 0.78rem; line-height: 1.45; }
+
+.crossing-mark {
+  display: grid;
+  place-items: center;
+  min-width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 2px solid var(--green);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.crossing-summary { margin: 0; font-size: 0.92rem; color: var(--ink); }
+
+.badge {
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  background: #101318;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.badge.strong { background: var(--green); border-color: var(--green); color: #0d2415; font-weight: 650; }
+.rider-actions button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* --- Application installée / petits écrans --- */
+/* Marge de sécurité sous l'encoche et la barre gestuelle en mode standalone. */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+label.checkbox { align-items: flex-start; flex-wrap: wrap; }
+label.checkbox input { margin-top: 0.15rem; }
+label.checkbox small { flex-basis: 100%; margin-left: 1.6rem; }
+
+@media (max-width: 480px) {
+  .topbar { padding: 0.8rem 1rem; }
+  .nav { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 0.2rem; }
+  .nav-btn { flex: 0 0 auto; }
+  .card { padding: 1rem; }
+  .deck { grid-template-columns: 1fr; }
+  /* Cibles tactiles : 44 px de haut minimum. */
+  button, input, select { min-height: 44px; }
+  .link-btn { min-height: 0; }
+  .hint code { word-break: break-all; }
+}
+
+/* --- Avatars et couleur de famille de moto --- */
+/* `--famille` est posée sur la carte par categoryStyle() ; tout ce qui suit
+   s'y accroche, pour qu'une famille de moto se reconnaisse sans lire. */
+.avatar-slot {
+  position: relative;
+  display: block;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--sunken, #101318);
+}
+
+.avatar { display: block; width: 100%; height: 100%; }
+.avatar-photo { position: absolute; inset: 0; object-fit: cover; }
+
+.rider-head { align-items: center; gap: 0.8rem; }
+.rider-identity { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.rider-identity h3 { overflow-wrap: anywhere; }
+
+.chip.famille {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--famille, var(--amber)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--famille, var(--amber)) 45%, transparent);
+  color: var(--famille, var(--amber));
+  font-weight: 600;
+  font-size: 0.74rem;
+  text-transform: lowercase;
+}
+
+/* Le filet de la carte et celui du bloc moto prennent la teinte de la famille. */
+.rider { border-top: 2px solid var(--famille, var(--line)); }
+.rider .bike { border-left-color: var(--famille, var(--amber)); }
+.rider .score { border-color: var(--famille, var(--amber)); color: var(--famille, var(--amber)); }
+
+/* Liste des matchs : vignette + texte. */
+.match-list li { display: flex; align-items: center; gap: 0.65rem; }
+.match-list li .avatar-slot { width: 40px; height: 40px; border-radius: 11px; }
+.match-list li > div { min-width: 0; }
+.match-list li .match-name,
+.match-list li .match-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 480px) {
+  .avatar-slot { width: 48px; height: 48px; }
+}
+
+/* Teintes par famille de moto. Doivent rester alignées sur CATEGORY_COLOURS
+   dans avatars.js, qui les utilise pour dessiner les casques. */
+.famille-sportive    { --famille: #ff7a92; --famille-sombre: #e11d48; }
+.famille-roadster    { --famille: #ffa76b; --famille-sombre: #d96b22; }
+.famille-trail       { --famille: #7ddfa0; --famille-sombre: #2f9e5c; }
+.famille-routiere    { --famille: #7dbcff; --famille-sombre: #2f7fd4; }
+.famille-custom      { --famille: #c9a8ff; --famille-sombre: #7c4dcc; }
+.famille-supermotard { --famille: #ffe07a; --famille-sombre: #d9a41a; }
+.famille-cross       { --famille: #ffa26b; --famille-sombre: #e05a15; }
+.famille-scooter     { --famille: #8fe8dc; --famille-sombre: #2f9e94; }
+.famille-inconnue    { --famille: #b8c2cf; --famille-sombre: #69737f; }

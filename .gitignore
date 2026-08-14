@@ -155,3 +155,21 @@ cython_debug/
 models/*
 *.wav
 main-dev.py
+
+# MotoMatch
+motomatch/*.db
+motomatch/*.db-wal
+motomatch/*.db-shm
+motomatch/.env
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+
+# Déploiement
+deploy/.env
+deploy/sauvegardes/*.db

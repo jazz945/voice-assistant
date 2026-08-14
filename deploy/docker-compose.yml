@@ -1,0 +1,87 @@
+# MotoMatch, auto-hébergé.
+#
+#   cp .env.example .env   puis éditer .env
+#   docker compose up -d
+#
+# Caddy s'occupe du HTTPS. Deux configurations au choix, via CADDYFILE
+# dans .env : `Caddyfile` (nom de domaine réel, certificat automatique) ou
+# `Caddyfile.lan` (réseau local, autorité de certification interne).
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: motomatch:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MOTOMATCH_DB: /data/motomatch.db
+      # Seul Caddy, sur le réseau interne de la composition, est autorisé à
+      # renseigner X-Forwarded-For. Le réseau est figé plus bas précisément
+      # pour pouvoir écrire cette plage ici.
+      FORWARDED_ALLOW_IPS: 172.30.0.0/16
+    volumes:
+      - motomatch-data:/data
+    # Aucun port publié : l'application n'est joignable qu'à travers Caddy.
+    expose:
+      - "8000"
+    networks:
+      - interne
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      MOTOMATCH_SITE_ADDRESS: ${MOTOMATCH_SITE_ADDRESS:?définir MOTOMATCH_SITE_ADDRESS dans .env}
+    volumes:
+      - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
+      # Persiste les certificats : sans ce volume, chaque redémarrage en
+      # redemande de nouveaux et Let's Encrypt finit par limiter le débit.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - interne
+    security_opt:
+      - no-new-privileges:true
+
+  # Sauvegarde quotidienne de la base, avec rotation.
+  backup:
+    image: motomatch:latest
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      MOTOMATCH_DB: /data/motomatch.db
+      BACKUP_DIR: /sauvegardes
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      # /data en lecture seule : une sauvegarde ne doit pas pouvoir abîmer la
+      # base. Lire une base WAL suppose un fichier `-shm`, mais le conteneur
+      # applicatif l'a déjà créé sur ce volume partagé — vérifié, ça marche.
+      - motomatch-data:/data:ro
+      - ./sauvegardes:/sauvegardes
+      - ./backup.py:/app/backup.py:ro
+    entrypoint: ["python", "/app/backup.py", "--boucle"]
+    networks:
+      - interne
+
+networks:
+  interne:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  motomatch-data:
+  caddy-data:
+  caddy-config:

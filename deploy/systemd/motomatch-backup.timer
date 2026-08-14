@@ -1,0 +1,12 @@
+[Unit]
+Description=Sauvegarde quotidienne de MotoMatch
+
+[Timer]
+OnCalendar=daily
+# Décale le déclenchement pour éviter que toutes les machines sauvegardent
+# à la même seconde, et rattrape une sauvegarde manquée (machine éteinte).
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
