@@ -8,12 +8,16 @@ terminal : l'abonnement serait gratuit pour qui sait faire un `curl`. Seul le
 prestataire de paiement sait qu'un paiement a réellement eu lieu, et il le dit
 par un webhook signé, vérifié ici.
 
-## Ce que ce module ne fait pas
+## Ce que ce module fait, et ce qu'il ne fait pas
 
-Il n'appelle aucun prestataire. Le format de signature implémenté est celui de
-Stripe (`t=…,v1=…`, HMAC-SHA256 sur `timestamp.corps`), largement repris
-ailleurs, mais la création des sessions de paiement demande des clés d'API et un
-compte : c'est à brancher au moment du déploiement, pas ici.
+Il vérifie les signatures et traduit les évènements reçus. Il n'appelle jamais
+le prestataire : la création des sessions de paiement vit dans
+`stripe_gateway.py`. La séparation est volontaire — ce fichier est le seul
+chemin par lequel un abonnement s'active, il doit rester lisible d'un bout à
+l'autre.
+
+Le format de signature est celui de Stripe (`t=…,v1=…`, HMAC-SHA256 sur
+`timestamp.corps`), largement repris ailleurs.
 
 **Sur mobile, ce chemin ne sert pas.** Apple (règle 3.1.1) et Google imposent
 leur propre facturation pour tout abonnement numérique, avec 15 à 30 % de
